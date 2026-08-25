@@ -82,14 +82,41 @@ Django API to a normal host instead:
 
 1. Provision a Postgres database and set `DATABASE_URL` to its connection
    string.
-2. Set `SECRET_KEY` (a long random string), `DEBUG=False`, `ALLOWED_HOSTS`
-   (your backend's domain), and `CORS_ALLOWED_ORIGINS` (your Vercel URL).
-3. Install `requirements.txt` and run `python manage.py migrate`.
-4. Start command: `gunicorn trust_game.wsgi --bind 0.0.0.0:$PORT` (already
-   declared in `backend/Procfile`; most PaaS providers pick it up
-   automatically).
-5. Static files are served via WhiteNoise — run `python manage.py
-   collectstatic` once as part of your deploy step.
+2. Set these environment variables:
+   - `SECRET_KEY` — a long random string
+   - `DEBUG` — `False`
+   - `ALLOWED_HOSTS` — your backend's **bare domain only** (no `https://`,
+     no trailing slash), e.g. `trust-gambit-api.onrender.com`. A mismatch
+     here makes Django reject every request with an opaque `400 Bad
+     Request`, so this is the first thing to check if nothing works.
+   - `CORS_ALLOWED_ORIGINS` — your Vercel URL, e.g.
+     `https://trust-gambit.vercel.app` — **no trailing slash or path**, or
+     `django-cors-headers` fails a startup check and the deploy won't boot.
+   - Optionally `DJANGO_SUPERUSER_USERNAME` / `_EMAIL` / `_PASSWORD` — if
+     all three are set, an admin account is created automatically on
+     startup (see below).
+3. Build command: `pip install -r requirements.txt && python manage.py
+   collectstatic --noinput`.
+4. Start command: `python manage.py migrate && (python manage.py
+   createsuperuser --noinput || true) && gunicorn trust_game.wsgi --bind
+   0.0.0.0:$PORT` — run `migrate` (and the superuser bootstrap) here
+   explicitly rather than relying on `backend/Procfile`'s separate
+   `release:`/`web:` lines, since providers with an explicit Start Command
+   field (Render included) don't run Heroku-style release phases or use
+   the `Procfile` at all once you've overridden it.
+5. `backend/runtime.txt` pins Python to 3.12 — Django 4.2 and
+   `psycopg2-binary` don't yet support the newer Python versions some
+   providers default to (e.g. Render moved to 3.14), which fails with a
+   `psycopg2 or psycopg module` import error at boot if left unpinned.
+
+**Creating the first admin account:** if your plan doesn't include shell
+access (e.g. Render's free tier), set `DJANGO_SUPERUSER_USERNAME`,
+`DJANGO_SUPERUSER_EMAIL`, and `DJANGO_SUPERUSER_PASSWORD` as environment
+variables — `backend/Procfile`'s start command creates that account
+automatically on boot if it doesn't already exist yet (and does nothing on
+later deploys once it does, so it's safe to leave those variables set
+permanently). Log in at `/admin/` with those credentials to create the
+`Game`, `Domain`, `Lobby`, and `Round` records the game needs.
 
 See `backend/.env.example` and `frontend/.env.example` for the full list of
 environment variables each side reads.
