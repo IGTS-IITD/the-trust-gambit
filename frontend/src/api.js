@@ -1,10 +1,8 @@
-// const BASE = (() => {
-//   const fromEnv = import.meta?.env?.VITE_API_BASE_URL;
-//   if (fromEnv) return fromEnv.replace(/\/$/, "") + "/api";
-//   return `${window.location.origin}/api`;
-// })();
-
-export const BASE = "http://localhost:8000/api";
+export const BASE = (() => {
+  const fromEnv = import.meta.env.VITE_API_BASE_URL;
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  return "http://localhost:8000/api";
+})();
 
 export function getToken() {
   return localStorage.getItem("tg_token") || "";
