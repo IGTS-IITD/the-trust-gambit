@@ -1,6 +1,6 @@
 from django.test import TestCase
 from django.contrib.auth.models import User
-from .models import Game, Round, Participant, Action, GameScore, Domain
+from .models import Game, Round, Participant, Action, GameScore, Domain, Lobby
 from .scoring import calculate_scores_for_round
 
 class ScoringEngineTest(TestCase):
@@ -86,4 +86,22 @@ class ScoringEngineTest(TestCase):
         self.assertEqual(score_a, -1)
         self.assertEqual(score_b, -1)
         self.assertEqual(score_c, -1)
+
+
+class LobbyAdminTest(TestCase):
+    def test_admin_can_assign_unassigned_participants(self):
+        admin_user = User.objects.create_superuser("admin", "admin@example.com", "password")
+        Game.objects.create(name="Active game")
+        for index in range(3):
+            Participant.objects.create(user=User.objects.create_user(f"player_{index}"))
+
+        self.client.force_login(admin_user)
+        response = self.client.post(
+            "/admin/game/participant/assign-lobbies/",
+            {"lobby_size": 2},
+        )
+
+        self.assertRedirects(response, "/admin/game/participant/", fetch_redirect_response=False)
+        self.assertEqual(Lobby.objects.count(), 2)
+        self.assertEqual(Participant.objects.filter(current_lobby__isnull=False).count(), 3)
 
