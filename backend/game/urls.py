@@ -1,15 +1,18 @@
 from django.urls import path
 from .views import (
-    DelegationGraphView, RegisterUserView, CustomAuthToken, 
-    ParticipantProfileView, DomainListView, RoundListView, 
+    DelegationGraphView, RegisterUserView, CustomAuthToken,
+    ParticipantProfileView, DomainListView, RoundListView,
     SelfRatingCreateListView, HostelListView,
     CurrentRoundView, SubmitActionView,
     LeaderboardView, AdminEndRoundView, AllRatingsListView,
-    AdminAssignLobbiesView
+    AdminAssignLobbiesView, AdminStartGameView,
+    VerifyEmailView, ResendVerificationView,
 )
 
 urlpatterns = [
     path('register/', RegisterUserView.as_view(), name='register'),
+    path('verify-email/', VerifyEmailView.as_view(), name='verify-email'),
+    path('resend-verification/', ResendVerificationView.as_view(), name='resend-verification'),
     path('login/', CustomAuthToken.as_view(), name='login'),
     path('profile/', ParticipantProfileView.as_view(), name='participant-profile'),
     path('domains/', DomainListView.as_view(), name='domain-list'),
@@ -26,5 +29,6 @@ urlpatterns = [
     # path('lobbies/<int:lobby_id>/leaderboard/', LobbyLeaderboardView.as_view(), name='lobby-leaderboard'),
 
     path('admin/end-round/', AdminEndRoundView.as_view(), name='admin-end-round'),
+    path('admin/start-game/', AdminStartGameView.as_view(), name='admin-start-game'),
     path('admin/assign-lobbies/', AdminAssignLobbiesView.as_view(), name='admin-assign-lobbies'),
 ]

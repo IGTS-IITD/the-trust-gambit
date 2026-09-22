@@ -1,12 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
-import {
-  apiRegister,
-  apiGetHostels,
-  setToken,
-  setUsername,
-  setParticipantId,
-} from "../api.js";
+import { Link } from "react-router-dom";
+import { apiRegister, apiGetHostels } from "../api.js";
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -17,7 +11,7 @@ export default function Register() {
   });
   const [hostels, setHostels] = useState([]);
   const [error, setError] = useState("");
-  const navigate = useNavigate();
+  const [submittedEmail, setSubmittedEmail] = useState("");
 
   useEffect(() => {
     apiGetHostels()
@@ -41,15 +35,49 @@ export default function Register() {
           ? { hostel_id: Number.parseInt(form.hostel_id, 10) }
           : {}),
       };
-      const res = await apiRegister(payload);
-      setToken(res.token);
-      setUsername(res.user?.username || form.username);
-      if (res.participant_id) setParticipantId(res.participant_id);
-      navigate("/");
+      await apiRegister(payload);
+      setSubmittedEmail(form.email);
     } catch (err) {
       setError(err.message || "Registration failed");
     }
   };
+
+  if (submittedEmail) {
+    return (
+      <div className="max-w-md mx-auto">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xl p-8 text-center">
+          <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-blue-200">
+            <svg
+              className="w-7 h-7 text-blue-600"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+              />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800 mb-2">
+            Check your email
+          </h1>
+          <p className="text-slate-600 text-sm">
+            We sent a verification link to <strong>{submittedEmail}</strong>.
+            Click it to activate your account, then come back and log in.
+          </p>
+          <Link
+            className="inline-block mt-6 text-blue-600 hover:text-blue-700 font-semibold text-sm"
+            to="/login"
+          >
+            Back to login
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-md mx-auto">

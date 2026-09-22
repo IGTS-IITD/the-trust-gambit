@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from .email_verification import is_disposable_email
 from .models import GameScore, Participant, Domain, SelfRating, Hostel, Action, Round
 
 class UserSerializer(serializers.ModelSerializer):
@@ -9,12 +10,24 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['username', 'email', 'password']
 
+    def validate_email(self, value):
+        if is_disposable_email(value):
+            raise serializers.ValidationError(
+                "Disposable/temporary email addresses aren't allowed. Please use a real address."
+            )
+        existing = User.objects.filter(email__iexact=value).first()
+        if existing and existing.is_active:
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value
+
     def create(self, validated_data):
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password']
         )
+        user.is_active = False
+        user.save(update_fields=['is_active'])
         return user
 
 class HostelSerializer(serializers.ModelSerializer):
@@ -68,9 +81,21 @@ class PublicSelfRatingSerializer(serializers.ModelSerializer):
         
 class RoundSerializer(serializers.ModelSerializer):
     domain = serializers.StringRelatedField() # Show the domain name instead of its ID
+    seconds_remaining = serializers.SerializerMethodField()
+
     class Meta:
         model = Round
-        fields = ['id', 'round_number', 'domain', 'question_text']
+        fields = [
+            'id', 'round_number', 'domain', 'question_text',
+            'duration_seconds', 'starts_at', 'seconds_remaining',
+        ]
+
+    def get_seconds_remaining(self, obj):
+        if not obj.starts_at:
+            return None
+        from django.utils import timezone
+        elapsed = (timezone.now() - obj.starts_at).total_seconds()
+        return max(0, int(obj.duration_seconds - elapsed))
 
 class ActionSerializer(serializers.ModelSerializer):
     participant = serializers.HiddenField(default=serializers.CurrentUserDefault())

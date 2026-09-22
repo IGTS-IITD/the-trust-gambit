@@ -29,6 +29,22 @@ export function getParticipantId() {
   return v ? Number.parseInt(v, 10) : null;
 }
 
+// DRF errors come in a few shapes: {detail: "..."}, {error: "..."}, a plain
+// array of strings, or field-level validation errors like
+// {email: ["This field is required."]}. Flatten whichever we got into one
+// readable string instead of just falling back to the HTTP status text.
+function extractErrorMessage(data) {
+  if (!data || typeof data === "string") return data || "";
+  if (data.detail) return data.detail;
+  if (data.error) return data.error;
+  if (Array.isArray(data)) return data[0];
+
+  const firstField = Object.values(data).find(
+    (v) => Array.isArray(v) && v.length
+  );
+  return firstField ? firstField[0] : "";
+}
+
 async function request(path, { method = "GET", body, auth = true } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (auth && getToken()) headers["Authorization"] = `Token ${getToken()}`;
@@ -48,8 +64,10 @@ async function request(path, { method = "GET", body, auth = true } = {}) {
   console.log(`${BASE}${path}`, path, { method, body }, "=>", res.status, data);
 
   if (!res.ok) {
-    const message = (data && (data.detail || data.error)) || res.statusText;
-    throw new Error(message || "Request failed");
+    const message = extractErrorMessage(data) || res.statusText;
+    const error = new Error(message || "Request failed");
+    error.data = data;
+    throw error;
   }
   return data;
 }
@@ -64,6 +82,12 @@ export const apiLogin = (username, password) =>
 
 export const apiRegister = (payload) =>
   request("/register/", { method: "POST", body: payload, auth: false });
+
+export const apiVerifyEmail = (uid, token) =>
+  request("/verify-email/", { method: "POST", body: { uid, token }, auth: false });
+
+export const apiResendVerification = (email) =>
+  request("/resend-verification/", { method: "POST", body: { email }, auth: false });
 
 /* Profile */
 export const apiGetProfile = () => request("/profile/");

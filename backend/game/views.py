@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db import models
 from rest_framework import generics, status, serializers
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
@@ -12,6 +13,8 @@ from .serializers import GameScoreSerializer, UserSerializer, ParticipantProfile
 
 from .scoring import calculate_scores_for_round
 from .lobby_utils import assign_participants_to_lobbies
+from .round_flow import resolve_current_round, force_advance_current_round, start_game
+from .email_verification import send_verification_email, resolve_verification_token
 
 class RegisterUserView(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -19,6 +22,15 @@ class RegisterUserView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
+        username = request.data.get('username')
+        email = request.data.get('email')
+        # A previous, never-verified registration with this username or
+        # email doesn't block a fresh attempt (lost the link, mistyped
+        # something the first time, etc.) - clear it out before validating.
+        User.objects.filter(is_active=False).filter(
+            models.Q(username=username) | models.Q(email__iexact=email)
+        ).delete()
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
@@ -29,24 +41,69 @@ class RegisterUserView(generics.CreateAPIView):
             try:
                 hostel = Hostel.objects.get(id=hostel_id)
             except Hostel.DoesNotExist:
+                user.delete()
                 return Response({"hostel_id": "Invalid hostel ID provided."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        participant = Participant.objects.create(user=user, hostel=hostel)
 
-        token, created = Token.objects.get_or_create(user=user)
+        Participant.objects.create(user=user, hostel=hostel)
+        send_verification_email(user)
 
         headers = self.get_success_headers(serializer.data)
         return Response({
             'user': serializer.data,
-            'participant_id': participant.id,
-            'token': token.key
+            'detail': 'Account created. Check your email for a verification link before logging in.',
         }, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class VerifyEmailView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        user = resolve_verification_token(request.data.get('uid', ''), request.data.get('token', ''))
+        if not user:
+            return Response({'detail': 'This verification link is invalid or has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not user.is_active:
+            user.is_active = True
+            user.save(update_fields=['is_active'])
+
+        token, created = Token.objects.get_or_create(user=user)
+        participant = getattr(user, 'participant', None)
+        return Response({
+            'token': token.key,
+            'user_id': user.pk,
+            'username': user.username,
+            'participant_id': participant.id if participant else None,
+        })
+
+
+class ResendVerificationView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        email = request.data.get('email', '')
+        user = User.objects.filter(email__iexact=email, is_active=False).first()
+        if user:
+            send_verification_email(user)
+        # Same response either way, so this can't be used to probe which
+        # emails are registered.
+        return Response({'detail': "If that email is registered and not yet verified, we've sent a new link."})
+
 
 class CustomAuthToken(ObtainAuthToken):
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data,
                                            context={'request': request})
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except serializers.ValidationError:
+            username = request.data.get('username', '')
+            unverified = User.objects.filter(username=username, is_active=False).exists()
+            if unverified:
+                return Response(
+                    {'detail': 'Please verify your email before logging in.', 'unverified': True},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            raise
         user = serializer.validated_data['user']
         token, created = Token.objects.get_or_create(user=user)
         return Response({
@@ -142,10 +199,10 @@ class CurrentRoundView(APIView):
         if not active_game:
             return Response({"detail": "No active game at the moment."}, status=404)
 
-        current_round = Round.objects.filter(game=active_game, is_completed=False).order_by('-round_number').first()
+        current_round = resolve_current_round(active_game)
         if not current_round:
             return Response({"detail": "No active round at the moment."}, status=status.HTTP_404_NOT_FOUND)
-        
+
         user_lobby = request.user.participant.current_lobby
         if not user_lobby:
             return Response({"detail": "You have not been assigned to a lobby yet."}, status=400)
@@ -182,8 +239,8 @@ class SubmitActionView(generics.CreateAPIView):
         active_game = Game.objects.filter(is_active=True).first()
         if not active_game:
             raise serializers.ValidationError("No active game to submit an action for.")
-        
-        current_round = Round.objects.filter(is_completed=False).order_by('-round_number').first()
+
+        current_round = resolve_current_round(active_game)
         if not current_round:
             # This should ideally be handled with a custom exception
             raise serializers.ValidationError("No active round available to submit an action for.")
@@ -239,21 +296,48 @@ class LeaderboardView(APIView):
     
 class AdminEndRoundView(APIView):
     """
-    An admin-only endpoint to trigger the scoring for the current active round.
+    An admin-only escape hatch to end the current round immediately,
+    regardless of its timer, and start the next one right away. Normal
+    rounds end automatically on their own via round_flow.resolve_current_round.
     """
     permission_classes = [IsAdminUser]
 
     def post(self, request, *args, **kwargs):
-        # Find the current round to be ended
-        current_round = Round.objects.filter(is_completed=False).order_by('round_number').first()
+        active_game = Game.objects.filter(is_active=True).first()
+        if not active_game:
+            return Response({'error': 'No active game to end a round for.'}, status=status.HTTP_404_NOT_FOUND)
 
-        if not current_round:
+        ended_round = resolve_current_round(active_game)
+        if not ended_round:
             return Response({'error': 'No active round to end.'}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Trigger the scoring logic from scoring.py
-        calculate_scores_for_round(current_round.id)
-        
-        return Response({'status': f'Scoring successfully initiated for round {current_round.round_number}.'})
+
+        next_round = force_advance_current_round(active_game)
+        return Response({
+            'status': f'Round {ended_round.round_number} scored and ended early.',
+            'next_round': next_round.round_number if next_round else None,
+        })
+
+
+class AdminStartGameView(APIView):
+    """
+    An admin-only endpoint to kick off round 1 (and therefore the whole
+    automated round sequence) for the active game.
+    """
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        active_game = Game.objects.filter(is_active=True).first()
+        if not active_game:
+            return Response({'error': 'No active game to start.'}, status=status.HTTP_404_NOT_FOUND)
+
+        started_round = start_game(active_game)
+        if not started_round:
+            return Response(
+                {'error': 'Game already started, or there is no round 1 to start.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({'status': f'Round {started_round.round_number} started.'})
 
 class RoundListView(generics.ListAPIView):
     """

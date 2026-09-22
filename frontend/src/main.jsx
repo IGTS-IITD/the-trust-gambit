@@ -5,6 +5,7 @@ import "./styles/index.css"
 import App from "./App.jsx"
 import Login from "./pages/Login.jsx"
 import Register from "./pages/Register.jsx"
+import VerifyEmail from "./pages/VerifyEmail.jsx"
 import Dashboard from "./pages/Dashboard.jsx"
 import Profile from "./pages/Profile.jsx"
 import Leaderboard from "./pages/Leaderboard.jsx"
@@ -33,6 +34,7 @@ const router = createBrowserRouter([
       { index: true, element: <Dashboard /> },
       { path: "login", element: <Login /> },
       { path: "register", element: <Register /> },
+      { path: "verify-email/:uid/:token", element: <VerifyEmail /> },
       { path: "profile", element: <Profile /> },
       { path: "leaderboard", element: <Leaderboard /> },
       { path: "rounds", element: <Rounds /> },

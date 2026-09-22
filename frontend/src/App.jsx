@@ -27,7 +27,9 @@ export default function App() {
       </header>
       <main className="flex-1 mx-auto w-full max-w-5xl px-4 py-8">
         {/* Show a simple hint to login if trying to access protected pages */}
-        {!authed && !["/login", "/register"].includes(location.pathname) ? (
+        {!authed &&
+        !["/login", "/register"].includes(location.pathname) &&
+        !location.pathname.startsWith("/verify-email/") ? (
           <div className="bg-white rounded-xl border border-slate-200 shadow-lg p-8 text-center max-w-md mx-auto">
             <div className="mb-6">
               <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">

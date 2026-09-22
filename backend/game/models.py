@@ -60,9 +60,20 @@ class Round(models.Model):
     
     domain = models.ForeignKey(Domain, on_delete=models.CASCADE)
     question_text = models.TextField()
-    correct_answer = models.CharField(max_length=255, default='correct answer here') 
+    correct_answer = models.CharField(max_length=255, default='correct answer here')
     is_completed = models.BooleanField(default=False)
     round_number = models.PositiveIntegerField()
+
+    duration_seconds = models.PositiveIntegerField(
+        default=120,
+        help_text="How long this round stays open once it starts.",
+    )
+    starts_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Set automatically when this round becomes current. Leave blank.",
+    )
 
     class Meta:
         unique_together = ('game', 'round_number')

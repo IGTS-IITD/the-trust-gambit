@@ -43,9 +43,18 @@ python manage.py runserver
 Serves the API at `http://localhost:8000`. Copy `.env.example` to `.env` to
 override any setting locally (defaults work out of the box with SQLite).
 
-To actually see a game in the UI, create an admin user and seed a `Game`,
-`Domain`, `Lobby` and `Round` via `/admin/` (`python manage.py
-createsuperuser` first), then assign participants to that lobby.
+To actually see a game in the UI: create an admin user
+(`python manage.py createsuperuser`), then via `/admin/` create a `Game`,
+a `Domain`, and one `Round` per round of the competition (question, correct
+answer, domain, and how many seconds it stays open — `duration_seconds`).
+Once participants have registered, use the **"Assign unassigned players"**
+button on the Participants page to randomly sort them into lobbies.
+
+Once everything's set up, hit **"Start round 1"** on the Games page — the
+round sequence then runs itself: each round automatically scores itself and
+opens the next one the moment its timer runs out, with no further manual
+steps. (There's also a manual "end round early" override at
+`POST /api/admin/end-round/` if you need to cut a round short.)
 
 ### Frontend
 
@@ -95,6 +104,10 @@ Django API to a normal host instead:
    - Optionally `DJANGO_SUPERUSER_USERNAME` / `_EMAIL` / `_PASSWORD` — if
      all three are set, an admin account is created automatically on
      startup (see below).
+   - `EMAIL_HOST` / `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` / `FRONTEND_URL`
+     — required for registration verification emails to actually send (see
+     "Email verification" below). Without these, emails just print to the
+     server log instead of sending, and nobody can complete registration.
 3. Build command: `pip install -r requirements.txt && python manage.py
    collectstatic --noinput`.
 4. Start command: `python manage.py migrate && (python manage.py
@@ -120,6 +133,29 @@ permanently). Log in at `/admin/` with those credentials to create the
 
 See `backend/.env.example` and `frontend/.env.example` for the full list of
 environment variables each side reads.
+
+## Email verification
+
+Registration requires clicking a link emailed to the address provided
+before the account can log in (`User.is_active` stays `False` until then).
+This stops disposable/burner-email signups (a small blocklist rejects known
+temp-mail domains) and guarantees one *verified account per email address* —
+it does not, and can't by itself, guarantee one account per human, since
+nothing stops someone from using two different real email addresses. True
+person-level dedup would need phone/SMS OTP or ID verification, both of
+which need a paid third-party service.
+
+For this to actually send email, set `EMAIL_HOST`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`, and `FRONTEND_URL` (see `backend/.env.example`) —
+the simplest option is a Gmail account with a generated
+["app password"](https://myaccount.google.com/apppasswords) (requires 2FA
+enabled on that Google account). Left unset, `EMAIL_BACKEND` defaults to
+printing emails to the server log instead of sending them — fine for local
+dev, useless for a real event, so don't forget to set these before go-live.
+
+If someone doesn't receive the email, `POST /api/resend-verification/`
+(exposed as a "Resend" button on the login page once a login attempt shows
+the "please verify your email" error) sends a new link.
 
 ## Installing as an app (PWA)
 
