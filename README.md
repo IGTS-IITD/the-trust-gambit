@@ -12,13 +12,13 @@ poses a question, and every participant chooses to:
 Delegation cycles (A → B → A) are penalized flat (**−1** to everyone in the
 loop). Anyone who ends up net-positive also earns a reputation bonus —
 `β × (number of people who delegated to them)` — so being trusted pays.
-Scores accumulate per game on a lobby-scoped leaderboard, and each round's
+Scores accumulate across all games on a global leaderboard, and each round's
 delegations can be viewed as a graph.
 
 ## Stack
 
-- **Backend** — Django + Django REST Framework, token auth. SQLite locally,
-  Postgres in production.
+- **Backend** — Django 4.2 + Django REST Framework + django-jazzmin (admin
+  UI), token auth. SQLite locally, Postgres in production.
 - **Frontend** — React 19 + Vite + Tailwind CSS 4 + React Router +
   Cytoscape.js (delegation graph). Installable as a PWA on iOS/Android.
 
@@ -33,28 +33,45 @@ frontend/   React app (src/pages/ has one file per route)
 
 ```bash
 cd backend
-python3 -m venv .venv
+python -m venv .venv
+
+# Windows
+.\.venv\Scripts\Activate.ps1
+
+# macOS / Linux
 source .venv/bin/activate
+
 pip install -r requirements.txt
 python manage.py migrate
+python manage.py createsuperuser
 python manage.py runserver
 ```
 
 Serves the API at `http://localhost:8000`. Copy `.env.example` to `.env` to
 override any setting locally (defaults work out of the box with SQLite).
 
-To actually see a game in the UI: create an admin user
-(`python manage.py createsuperuser`), then via `/admin/` create a `Game`,
-a `Domain`, and one `Round` per round of the competition (question, correct
-answer, domain, and how many seconds it stays open — `duration_seconds`).
-Once participants have registered, use the **"Assign unassigned players"**
-button on the Participants page to randomly sort them into lobbies.
+#### Setting up a game
 
-Once everything's set up, hit **"Start round 1"** on the Games page — the
-round sequence then runs itself: each round automatically scores itself and
-opens the next one the moment its timer runs out, with no further manual
-steps. (There's also a manual "end round early" override at
-`POST /api/admin/end-round/` if you need to cut a round short.)
+1. Log into `/admin/` (django-jazzmin themed).
+2. Create a **Domain** (e.g. "Science", "History").
+3. Create a **Game** — give it a name. Lobbies are auto-created based on the
+   number of registered participants and the `player_limit` setting.
+4. Create one **Round** per round of the competition — each needs a question,
+   correct answer, domain, and `duration_seconds`.
+5. Hit the green **"Start Game"** button on the Games list page.
+
+The round sequence then runs itself: each round automatically scores and
+opens the next one when its timer runs out. There's also a manual "end round
+early" override at `POST /api/admin/end-round/`.
+
+> **Lobby automation:** Lobbies are named `GameName-Lobby-1`,
+> `GameName-Lobby-2`, etc. and sized according to the `LOBBY_PLAYER_LIMIT`
+> env var (default 10). Players are randomly balanced across lobbies at game
+> start. Mid-game registrants go to the lobby with the fewest members.
+>
+> **Single-game enforcement:** Only one game can be in the `RUNNING` state
+> at a time. You can create new games while one is running (they stay in
+> `REGISTRATION`), but cannot start them until the current game completes.
 
 ### Frontend
 
@@ -108,6 +125,8 @@ Django API to a normal host instead:
      — required for registration verification emails to actually send (see
      "Email verification" below). Without these, emails just print to the
      server log instead of sending, and nobody can complete registration.
+   - `LOBBY_PLAYER_LIMIT` — max players per lobby (default `10`).
+   - `LOBBY_SAFETY_BUFFER` — extra lobby capacity buffer (default `20`).
 3. Build command: `pip install -r requirements.txt && python manage.py
    collectstatic --noinput`.
 4. Start command: `python manage.py migrate && (python manage.py
@@ -129,7 +148,7 @@ variables — `backend/Procfile`'s start command creates that account
 automatically on boot if it doesn't already exist yet (and does nothing on
 later deploys once it does, so it's safe to leave those variables set
 permanently). Log in at `/admin/` with those credentials to create the
-`Game`, `Domain`, `Lobby`, and `Round` records the game needs.
+`Game`, `Domain`, and `Round` records the game needs.
 
 See `backend/.env.example` and `frontend/.env.example` for the full list of
 environment variables each side reads.

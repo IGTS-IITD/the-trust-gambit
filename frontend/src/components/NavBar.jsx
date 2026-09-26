@@ -1,112 +1,135 @@
-"use client";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, useLocation } from "react-router-dom";
+import { apiGetProfile } from "../api.js";
+import { formatScore } from "./UI.jsx";
 
-const linkClass =
-  "px-3 py-2 rounded-lg text-slate-700 hover:bg-slate-100 hover:text-blue-600 transition-all font-medium";
+const links = [
+  ["/", "Play"],
+  ["/leaderboard", "Standings"],
+  ["/rounds", "Rounds"],
+  ["/self-ratings", "Self ratings"],
+  ["/profile", "Profile"],
+];
 
 export default function NavBar({ authed, onLogout }) {
   const [open, setOpen] = useState(false);
+  const [score, setScore] = useState(null);
+  const toggleRef = useRef(null);
+  const location = useLocation();
 
-  const authedLinks = (
-    <>
-      <Link to="/" className={linkClass} onClick={() => setOpen(false)}>
-        Dashboard
-      </Link>
-      <Link
-        to="/leaderboard"
-        className={linkClass}
-        onClick={() => setOpen(false)}
-      >
-        Leaderboard
-      </Link>
-      <Link to="/rounds" className={linkClass} onClick={() => setOpen(false)}>
-        Rounds
-      </Link>
-      <Link
-        to="/self-ratings"
-        className={linkClass}
-        onClick={() => setOpen(false)}
-      >
-        Self Ratings
-      </Link>
-      <Link
-        to="/profile"
-        className={linkClass}
-        onClick={() => setOpen(false)}
-      >
-        Profile
-      </Link>
-      <button
-        className="md:ml-2 px-4 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-all hover:shadow-sm active:scale-95 text-left"
-        onClick={() => {
-          setOpen(false);
-          onLogout();
-        }}
-      >
-        Logout
-      </button>
-    </>
-  );
+  useEffect(() => {
+    setOpen(false);
+  }, [location.pathname]);
 
-  const guestLinks = (
-    <>
-      <Link
-        to="/login"
-        className="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all hover:shadow-md active:scale-95 text-center"
-        onClick={() => setOpen(false)}
-      >
-        Login
-      </Link>
-      <Link
-        to="/register"
-        className="px-5 py-2 border border-slate-300 bg-white text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-all hover:shadow-sm active:scale-95 text-center"
-        onClick={() => setOpen(false)}
-      >
-        Register
-      </Link>
-    </>
-  );
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKey = (event) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let requestNumber = 0;
+
+    const fetchScore = async () => {
+      const currentRequest = ++requestNumber;
+
+      if (!authed) {
+        setScore(null);
+        return;
+      }
+
+      try {
+        const profile = await apiGetProfile();
+        if (!cancelled && currentRequest === requestNumber) {
+          setScore(profile.total_score ?? 0);
+        }
+      } catch {
+        if (!cancelled && currentRequest === requestNumber) {
+          setScore(null);
+        }
+      }
+    };
+
+    fetchScore();
+    window.addEventListener("round_updated", fetchScore);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("round_updated", fetchScore);
+    };
+  }, [authed, location.pathname]);
+
+  const linkClass = ({ isActive }) =>
+    `nav-link${isActive ? " active" : ""}`;
 
   return (
-    <nav className="text-sm">
-      {/* Desktop nav */}
-      <div className="hidden md:flex items-center gap-2">
-        {authed ? authedLinks : guestLinks}
-      </div>
-
-      {/* Mobile hamburger toggle */}
+    <nav aria-label="Main navigation">
       <button
-        className="md:hidden w-11 h-11 grid place-items-center rounded-lg border border-slate-300 bg-white text-slate-700 active:scale-95 transition-all"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Close menu" : "Open menu"}
+        ref={toggleRef}
+        type="button"
+        className="nav-toggle"
         aria-expanded={open}
+        aria-controls="main-navigation"
+        onClick={() => setOpen((value) => !value)}
       >
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          {open ? (
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M6 18L18 6M6 6l12 12"
-            />
-          ) : (
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 6h16M4 12h16M4 18h16"
-            />
-          )}
-        </svg>
+        {open ? "Close" : "Menu"}
       </button>
 
-      {/* Mobile dropdown panel */}
-      {open && (
-        <div className="md:hidden absolute left-0 right-0 top-full bg-white border-b border-slate-200 shadow-lg px-4 py-3 flex flex-col gap-1 z-50">
-          {authed ? authedLinks : guestLinks}
-        </div>
-      )}
+      <div
+        id="main-navigation"
+        className={`nav-links${open ? " is-open" : ""}`}
+      >
+        {authed ? (
+          <>
+            {links.map(([to, label]) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={to === "/"}
+                className={linkClass}
+                onClick={() => setOpen(false)}
+              >
+                {label}
+              </NavLink>
+            ))}
+
+            {score !== null && (
+              <span className="nav-score">
+                {formatScore(score)} pts
+              </span>
+            )}
+
+            <button
+              type="button"
+              className="nav-link nav-logout"
+              onClick={() => {
+                setOpen(false);
+                onLogout();
+              }}
+            >
+              Sign out
+            </button>
+          </>
+        ) : (
+          <>
+            <NavLink to="/login" className={linkClass}>
+              Sign in
+            </NavLink>
+            <NavLink to="/register" className={linkClass}>
+              Register
+            </NavLink>
+          </>
+        )}
+      </div>
     </nav>
   );
 }

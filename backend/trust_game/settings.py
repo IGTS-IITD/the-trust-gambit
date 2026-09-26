@@ -40,6 +40,7 @@ ALLOWED_HOSTS = config(
 # Application definition
 
 INSTALLED_APPS = [
+    "jazzmin",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -190,3 +191,8 @@ if not DEBUG:
     CSRF_COOKIE_SECURE = True
     SECURE_HSTS_SECONDS = 60 * 60 * 24 * 7
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+
+LOBBY_PLAYER_LIMIT = config("LOBBY_PLAYER_LIMIT", default=10, cast=int)
+
+if LOBBY_PLAYER_LIMIT <= 0:
+    raise ValueError("LOBBY_PLAYER_LIMIT must be a positive integer.")

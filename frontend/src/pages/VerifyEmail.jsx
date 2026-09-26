@@ -6,95 +6,114 @@ import {
   setUsername,
   setParticipantId,
 } from "../api.js";
+import {
+  EmptyState,
+  Loading,
+  Notice,
+} from "../components/UI.jsx";
 
 export default function VerifyEmail() {
   const { uid, token } = useParams();
-  const [status, setStatus] = useState("verifying"); // verifying | success | error
-  const [error, setError] = useState("");
   const navigate = useNavigate();
-  const ran = useRef(false);
+
+  const [status, setStatus] = useState("verifying");
+  const [error, setError] = useState("");
+
+  const requestRef = useRef(null);
 
   useEffect(() => {
-    if (ran.current) return; // avoid double-fire under StrictMode's dev double-invoke
-    ran.current = true;
+    let cancelled = false;
+    let redirectTimer;
 
-    apiVerifyEmail(uid, token)
-      .then((res) => {
-        setToken(res.token);
-        setUsername(res.username);
-        if (res.participant_id) setParticipantId(res.participant_id);
+    setStatus("verifying");
+    setError("");
+
+    const key = JSON.stringify([uid, token]);
+
+    if (!requestRef.current || requestRef.current.key !== key) {
+      requestRef.current = {
+        key,
+        promise: Promise.resolve().then(() =>
+          apiVerifyEmail(uid, token)
+        ),
+      };
+    }
+
+    requestRef.current.promise
+      .then((response) => {
+        if (cancelled) return;
+
+        setToken(response.token);
+        setUsername(response.username);
+
+        if (response.participant_id != null) {
+          setParticipantId(response.participant_id);
+        }
+
         setStatus("success");
-        setTimeout(() => navigate("/"), 1500);
+
+        redirectTimer = window.setTimeout(() => {
+          navigate("/", { replace: true });
+        }, 1500);
       })
       .catch((err) => {
-        setError(err.message || "Verification failed");
+        if (cancelled) return;
+
+        setError(err.message || "This verification link could not be used.");
         setStatus("error");
       });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(redirectTimer);
+    };
   }, [uid, token, navigate]);
 
   return (
-    <div className="max-w-md mx-auto">
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xl p-8 text-center">
-        {status === "verifying" && (
-          <>
-            <div className="animate-pulse text-slate-600">
-              Verifying your email...
-            </div>
-          </>
-        )}
-        {status === "success" && (
-          <>
-            <div className="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-200">
-              <svg
-                className="w-7 h-7 text-green-600"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-2">
-              Email verified!
-            </h1>
-            <p className="text-slate-600 text-sm">Taking you in...</p>
-          </>
-        )}
-        {status === "error" && (
-          <>
-            <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-200">
-              <svg
-                className="w-7 h-7 text-red-600"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-800 mb-2">
-              Verification failed
-            </h1>
-            <p className="text-slate-600 text-sm mb-4">{error}</p>
-            <Link
-              className="text-blue-600 hover:text-blue-700 font-semibold text-sm"
-              to="/login"
-            >
-              Back to login
+    <div className="verification">
+      {status === "verifying" && (
+        <>
+          <div style={{ marginBottom: 22 }}>
+            <p className="eyebrow">Account verification</p>
+            <h1 className="page-title">Checking your link.</h1>
+            <p className="page-description">
+              Please wait while we verify your email address.
+            </p>
+          </div>
+
+          <Loading label="Verifying your email address" />
+        </>
+      )}
+
+      {status === "success" && (
+        <div className="panel">
+          <EmptyState
+            title="You're verified."
+            description="Your account is ready. Taking you to the game."
+          >
+            <Link className="btn btn-primary" to="/">
+              Continue now
             </Link>
-          </>
-        )}
-      </div>
+          </EmptyState>
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="panel">
+          <EmptyState
+            title="We couldn't verify that link."
+            description="It may have expired or already been used."
+          >
+            <Link className="btn btn-primary" to="/login">
+              Return to sign in
+            </Link>
+          </EmptyState>
+
+          <div className="panel-body" style={{ paddingTop: 0 }}>
+            <Notice tone="error">{error}</Notice>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

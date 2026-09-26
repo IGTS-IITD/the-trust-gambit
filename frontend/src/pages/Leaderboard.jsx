@@ -1,124 +1,205 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiLeaderboard } from "../api.js";
+import {
+  EmptyState,
+  Loading,
+  Notice,
+  PageHeader,
+  Panel,
+  formatScore,
+  initials,
+} from "../components/UI.jsx";
 
 export default function Leaderboard() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+
     setLoading(true);
+    setError("");
+
     apiLeaderboard()
-      .then(setRows)
-      .catch((e) => setError(e.message || "Failed to load leaderboard"))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((data) => {
+        if (!Array.isArray(data)) {
+          throw new Error("Unexpected leaderboard response.");
+        }
 
-  const rankBadge = (i) => {
-    const rank = i + 1;
-    if (rank === 1)
-      return {
-        cls: "bg-yellow-100 text-yellow-700 border-yellow-300",
-        content: "🥇",
-      };
-    if (rank === 2)
-      return {
-        cls: "bg-slate-100 text-slate-700 border-slate-300",
-        content: "🥈",
-      };
-    if (rank === 3)
-      return {
-        cls: "bg-amber-100 text-amber-700 border-amber-300",
-        content: "🥉",
-      };
-    return {
-      cls: "bg-slate-100 text-slate-600 border-slate-200",
-      content: String(rank),
+        if (!cancelled) setRows(data);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.message || "Unable to load the standings.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
     };
-  };
+  }, [reload]);
 
-  const initials = (name = "") => name.trim().slice(0, 2).toUpperCase();
-
-  if (loading)
-    return (
-      <div className="bg-white rounded-xl border border-slate-200 shadow-lg p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-2xl">🏆</span>
-          <h1 className="text-xl font-semibold text-slate-800">Leaderboard</h1>
-        </div>
-        <div className="space-y-3 animate-pulse">
-          <div className="h-12 bg-slate-100 rounded-lg" />
-          <div className="h-12 bg-slate-100 rounded-lg" />
-          <div className="h-12 bg-slate-100 rounded-lg" />
-          <div className="h-12 bg-slate-100 rounded-lg" />
-        </div>
-      </div>
+  const rankedRows = useMemo(() => {
+    const sorted = [...rows].sort(
+      (a, b) => Number(b.score) - Number(a.score)
     );
 
-  if (error)
-    return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-red-700">
-        <strong>Error:</strong> {error}
-      </div>
-    );
+    let rank = 0;
+
+    return sorted.map((row, index) => {
+      if (
+        index === 0 ||
+        Number(row.score) !== Number(sorted[index - 1].score)
+      ) {
+        rank = index + 1;
+      }
+
+      return { ...row, rank };
+    });
+  }, [rows]);
+
+  const visibleRows = rankedRows.filter((row) =>
+    String(row.participant?.username ?? "")
+      .toLowerCase()
+      .includes(search.trim().toLowerCase())
+  );
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-lg p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🏆</span>
-          <h1 className="text-xl font-semibold text-slate-800">Leaderboard</h1>
-        </div>
-        <div className="text-sm text-slate-500">
-          {rows.length} player{rows.length === 1 ? "" : "s"}
-        </div>
-      </div>
+    <>
+      <PageHeader
+        eyebrow="Performance"
+        title="The standings."
+        description="Cumulative scores. Shared scores receive the same rank."
+        actions={
+          <button
+            className="btn"
+            type="button"
+            disabled={loading}
+            onClick={() => setReload((value) => value + 1)}
+          >
+            {loading ? "Refreshing…" : "Refresh standings"}
+          </button>
+        }
+      />
 
-      {rows.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 p-6 text-center">
-          <div className="text-3xl mb-2">🕹️</div>
-          <p className="text-slate-700 font-medium">No scores yet</p>
-          <p className="text-slate-500 text-sm">Play a round to appear here.</p>
-        </div>
+      {loading ? (
+        <Loading label="Loading standings" />
+      ) : error ? (
+        <Notice tone="error">{error}</Notice>
       ) : (
-        <ul className="divide-y divide-slate-200">
-          {rows.map((r, idx) => {
-            const badge = rankBadge(idx);
-            const name = r.participant?.username || "Player";
-            return (
-              <li
-                key={idx}
-                className="group flex items-center justify-between gap-4 py-3 px-2 rounded-lg hover:bg-slate-50 transition-colors"
-              >
-                <div className="flex items-center gap-4 min-w-0">
-                  <span
-                    className={`w-9 h-9 grid place-items-center rounded-full border text-base font-semibold ${badge.cls}`}
-                  >
-                    {badge.content}
-                  </span>
+        <>
+          <div className="metrics">
+            <div className="metric">
+              <div className="metric-label">Participants listed</div>
+              <div className="metric-value mono">{rows.length}</div>
+            </div>
+            <div className="metric">
+              <div className="metric-label">Leading score</div>
+              <div className="metric-value mono">
+                {rankedRows.length
+                  ? formatScore(rankedRows[0].score)
+                  : "—"}
+              </div>
+            </div>
+            <div className="metric">
+              <div className="metric-label">Ranking</div>
+              <div className="metric-value">By score</div>
+            </div>
+          </div>
 
-                  <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 grid place-items-center font-semibold border border-blue-200">
-                    {initials(name)}
-                  </div>
+          <Panel
+            title="Participant standings"
+            aside={<span className="pill">{visibleRows.length} shown</span>}
+          >
+            <div className="panel-body">
+              <label className="field" style={{ maxWidth: 340 }}>
+                <span className="field-label">Find a participant</span>
+                <input
+                  type="search"
+                  className="input"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search by username"
+                />
+              </label>
+            </div>
 
-                  <div className="min-w-0">
-                    <div className="font-medium text-slate-800 truncate">
-                      {name}
-                    </div>
-                    <div className="text-xs text-slate-500">Participant</div>
-                  </div>
-                </div>
+            {rows.length === 0 ? (
+              <EmptyState
+                title="The board is open."
+                description="Scores will appear here when they become available."
+              />
+            ) : visibleRows.length === 0 ? (
+              <EmptyState
+                title="No matching participants"
+                description="Try another username."
+              />
+            ) : (
+              <div className="table-scroll">
+                <table className="data-table">
+                  <caption className="sr-only">
+                    Participant rankings by cumulative score
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Rank</th>
+                      <th scope="col">Participant</th>
+                      <th scope="col" className="align-right">Points</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRows.map((row, index) => {
+                      const name =
+                        row.participant?.username ?? "Participant";
 
-                <div className="shrink-0">
-                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
-                    {r.score}
-                  </span>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+                      return (
+                        <tr
+                          key={
+                            row.id ??
+                            row.participant?.id ??
+                            `${name}-${index}`
+                          }
+                        >
+                          <td>
+                            <span
+                              className={`rank ${
+                                row.rank === 1 ? "rank-first" : ""
+                              }`}
+                            >
+                              {String(row.rank).padStart(2, "0")}
+                            </span>
+                          </td>
+
+                          <td>
+                            <div className="person">
+                              <span className="avatar" aria-hidden="true">
+                                {initials(name)}
+                              </span>
+                              <span className="person-name">{name}</span>
+                            </div>
+                          </td>
+
+                          <td className="align-right">
+                            <span className="score">
+                              {formatScore(row.score)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Panel>
+        </>
       )}
-    </div>
+    </>
   );
 }

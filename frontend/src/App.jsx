@@ -1,86 +1,85 @@
-import { Outlet, Link, useNavigate, useLocation } from "react-router-dom";
+import {
+  Outlet,
+  Link,
+  useNavigate,
+  useLocation,
+} from "react-router-dom";
 import { getToken, clearToken } from "./api.js";
 import NavBar from "./components/NavBar.jsx";
+import { EmptyState } from "./components/UI.jsx";
 
 export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const authed = Boolean(getToken());
 
+  const isPublicPage =
+    ["/login", "/register"].includes(location.pathname) ||
+    location.pathname.startsWith("/verify-email/");
+
   const handleLogout = () => {
     clearToken();
-    navigate("/login");
+    navigate("/login", { replace: true });
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100">
-      <header className="border-b bg-white shadow-sm sticky top-0 z-50">
-        <div className="mx-auto max-w-5xl px-4 py-4 flex items-center justify-between">
+    <div className="tg-shell">
+      <a href="#main-content" className="sr-only focus:not-sr-only">
+        Skip to content
+      </a>
+
+      <header className="site-header">
+        <div className="header-inner">
           <Link
             to="/"
-            className="font-bold text-xl text-blue-600 hover:text-blue-700 transition-colors"
+            className="brand"
+            aria-label="The Trust Gambit home"
           >
-            🎲 The Trust Gambit
+            <span className="brand-symbol" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+              <i />
+            </span>
+
+            <span>
+              <span className="brand-name">The Trust Gambit</span>
+              <span className="brand-caption" style={{ display: "block" }}>
+                A game of judgment
+              </span>
+            </span>
           </Link>
+
           <NavBar authed={authed} onLogout={handleLogout} />
         </div>
       </header>
-      <main className="flex-1 mx-auto w-full max-w-5xl px-4 py-8">
-        {/* Show a simple hint to login if trying to access protected pages */}
-        {!authed &&
-        !["/login", "/register"].includes(location.pathname) &&
-        !location.pathname.startsWith("/verify-email/") ? (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-lg p-8 text-center max-w-md mx-auto">
-            <div className="mb-6">
-              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg
-                  className="w-8 h-8 text-blue-600"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                  />
-                </svg>
-              </div>
-              <h2 className="text-2xl font-semibold text-slate-800 mb-2">
-                Authentication Required
-              </h2>
-              <p className="text-slate-600">
-                Please sign in to access this page
-              </p>
-            </div>
-            <div className="flex gap-3 justify-center">
-              <Link
-                className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-all hover:shadow-md active:scale-95"
-                to="/login"
-              >
-                Login
+
+      <main id="main-content" className="site-main" tabIndex={-1}>
+        {!authed && !isPublicPage ? (
+          <div className="panel verification">
+            <EmptyState
+              title="Take your seat."
+              description="Sign in to join your game, submit decisions, and follow the standings."
+            >
+              <Link to="/login" className="btn btn-primary">
+                Sign in
               </Link>
-              <Link
-                className="px-6 py-2.5 border border-slate-300 bg-white text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-all hover:shadow-sm active:scale-95"
-                to="/register"
-              >
-                Register
+              <Link to="/register" className="btn">
+                Create account
               </Link>
-            </div>
+            </EmptyState>
           </div>
         ) : (
           <Outlet />
         )}
       </main>
-      <footer className="border-t bg-white mt-auto">
-        <div className="mx-auto max-w-5xl px-4 py-6 text-center">
-          <p className="text-sm text-slate-600">
+
+      <footer className="site-footer">
+        <div className="footer-inner">
+          <span>
             © {new Date().getFullYear()} The Trust Gambit
-          </p>
-          <p className="text-xs text-slate-500 mt-1">
-            A strategic delegation game
-          </p>
+          </span>
+          <span>STRATEGY / JUDGMENT / DELEGATION</span>
         </div>
       </footer>
     </div>

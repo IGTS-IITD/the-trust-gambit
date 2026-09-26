@@ -8,11 +8,11 @@ from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from django.contrib.auth.models import User
 
-from .models import Action, Game, GameScore, Participant, Domain, SelfRating, Hostel, Round, Lobby
+from .models import Action, Game, GameScore, Participant, Domain, SelfRating, Hostel, Round, Lobby, GameMembership
 from .serializers import GameScoreSerializer, UserSerializer, ParticipantProfileSerializer, SelfRatingSerializer, PublicSelfRatingSerializer, HostelSerializer, RoundSerializer, SimpleParticipantSerializer, ActionSerializer
 
 from .scoring import calculate_scores_for_round
-from .lobby_utils import assign_participants_to_lobbies
+from .lobby_utils import register_participant
 from .round_flow import resolve_current_round, force_advance_current_round, start_game
 from .email_verification import send_verification_email, resolve_verification_token
 
@@ -24,9 +24,6 @@ class RegisterUserView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         username = request.data.get('username')
         email = request.data.get('email')
-        # A previous, never-verified registration with this username or
-        # email doesn't block a fresh attempt (lost the link, mistyped
-        # something the first time, etc.) - clear it out before validating.
         User.objects.filter(is_active=False).filter(
             models.Q(username=username) | models.Q(email__iexact=email)
         ).delete()
@@ -65,6 +62,12 @@ class VerifyEmailView(APIView):
         if not user.is_active:
             user.is_active = True
             user.save(update_fields=['is_active'])
+            
+            # Automatically register for all active games
+            active_games = Game.objects.exclude(state=Game.State.COMPLETED)
+            if hasattr(user, 'participant'):
+                for game in active_games:
+                    register_participant(user.participant, game)
 
         token, created = Token.objects.get_or_create(user=user)
         participant = getattr(user, 'participant', None)
@@ -84,8 +87,6 @@ class ResendVerificationView(APIView):
         user = User.objects.filter(email__iexact=email, is_active=False).first()
         if user:
             send_verification_email(user)
-        # Same response either way, so this can't be used to probe which
-        # emails are registered.
         return Response({'detail': "If that email is registered and not yet verified, we've sent a new link."})
 
 
@@ -160,28 +161,62 @@ class SelfRatingCreateListView(generics.ListCreateAPIView):
             
         serializer.save()
 
-class AdminAssignLobbiesView(APIView):
+
+class AdminAssignLobbyView(APIView):
     permission_classes = [IsAdminUser]
 
     def post(self, request, *args, **kwargs):
-        lobby_size = request.data.get('lobby_size')
-        if not lobby_size or not isinstance(lobby_size, int) or lobby_size <= 0:
-            return Response({'error': 'A valid integer lobby_size is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        game_id = request.data.get('game_id')
+        participant_id = request.data.get('participant_id')
+        lobby_id = request.data.get('lobby_id')
+
+        if not all([game_id, participant_id, lobby_id]):
+            return Response({'error': 'game_id, participant_id, and lobby_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        game = get_object_or_404(Game, id=game_id)
+        participant = get_object_or_404(Participant, id=participant_id)
+        lobby = get_object_or_404(Lobby, id=lobby_id)
+
+        if game.state == Game.State.COMPLETED:
+            return Response({'error': 'Cannot assign to a completed game.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if lobby.game != game:
+            return Response({'error': 'Lobby does not belong to this game.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            membership = GameMembership.objects.get(game=game, participant=participant)
+        except GameMembership.DoesNotExist:
+            return Response({'error': 'Participant is not registered for this game.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if membership.lobby:
+            if membership.lobby == lobby:
+                return Response({'status': 'Already assigned to this lobby.'})
+            return Response({'error': 'Participant is already assigned to another lobby.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_members_count = GameMembership.objects.filter(lobby=lobby).count()
+        if current_members_count >= game.player_limit:
+            return Response({'error': 'Lobby is already at or above the normal player limit.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        membership.lobby = lobby
         
-        result = assign_participants_to_lobbies(lobby_size)
+        if game.state == Game.State.RUNNING:
+            current_round = resolve_current_round(game)
+            if current_round:
+                membership.eligible_from_round = current_round.round_number + 1
+            else:
+                membership.eligible_from_round = 1
+        else:
+            membership.eligible_from_round = 1
+
+        membership.save(update_fields=['lobby', 'eligible_from_round'])
         
-        if "error" in result:
-            return Response(result, status=status.HTTP_400_BAD_REQUEST)
-            
-        return Response(result, status=status.HTTP_200_OK)
+        return Response({'status': 'Successfully assigned.'})
+
 
 class AllRatingsListView(generics.ListAPIView):
-    """
-    Provides a public, read-only list of all self-ratings from all participants.
-    """
     queryset = SelfRating.objects.all().select_related('participant__user', 'domain')
     serializer_class = PublicSelfRatingSerializer
-    permission_classes = [IsAuthenticated] # Only logged-in users can see this
+    permission_classes = [IsAuthenticated]
     
 class HostelListView(generics.ListAPIView):
     queryset = Hostel.objects.all()
@@ -189,13 +224,10 @@ class HostelListView(generics.ListAPIView):
     permission_classes = [AllowAny]
 
 class CurrentRoundView(APIView):
-    """
-    Provides the details for the current active round and a list of participants.
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        active_game = Game.objects.filter(is_active=True).first()
+        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
         if not active_game:
             return Response({"detail": "No active game at the moment."}, status=404)
 
@@ -203,11 +235,17 @@ class CurrentRoundView(APIView):
         if not current_round:
             return Response({"detail": "No active round at the moment."}, status=status.HTTP_404_NOT_FOUND)
 
-        user_lobby = request.user.participant.current_lobby
+        membership = GameMembership.objects.filter(game=active_game, participant=request.user.participant).first()
+        user_lobby = membership.lobby if membership else None
+        
         if not user_lobby:
             return Response({"detail": "You have not been assigned to a lobby yet."}, status=400)
 
-        other_participants = Participant.objects.filter(current_lobby=user_lobby).exclude(user=request.user)
+        # Ensure the user is eligible for this round
+        if membership.eligible_from_round and membership.eligible_from_round > current_round.round_number:
+            return Response({"detail": "You are assigned but not eligible for the current round."}, status=400)
+
+        other_participants = Participant.objects.filter(memberships__lobby=user_lobby).exclude(user=request.user)
         
         round_serializer = RoundSerializer(current_round)
         participants_serializer = SimpleParticipantSerializer(other_participants, many=True)
@@ -217,95 +255,65 @@ class CurrentRoundView(APIView):
             'delegation_targets': participants_serializer.data
         })
 
-# class LobbyLeaderboardView(generics.ListAPIView):
-#     # (Requirement 4: Leaderboard is lobby-specific)
-#     serializer_class = GameScoreSerializer
-#     permission_classes = [IsAuthenticated]
-
-#     def get_queryset(self):
-#         lobby_id = self.kwargs.get('lobby_id')
-#         return GameScore.objects.filter(participant__current_lobby_id=lobby_id).order_by('-score')
-
 class SubmitActionView(generics.CreateAPIView):
-    """
-    Allows a participant to submit their action for the current round.
-    """
     serializer_class = ActionSerializer
     permission_classes = [IsAuthenticated]
 
     def get_serializer_context(self):
-        # Pass the current round to the serializer for validation
         context = super().get_serializer_context()
-        active_game = Game.objects.filter(is_active=True).first()
+        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
         if not active_game:
             raise serializers.ValidationError("No active game to submit an action for.")
 
         current_round = resolve_current_round(active_game)
         if not current_round:
-            # This should ideally be handled with a custom exception
             raise serializers.ValidationError("No active round available to submit an action for.")
+            
+        membership = GameMembership.objects.filter(game=active_game, participant=self.request.user.participant).first()
+        if not membership or not membership.lobby:
+            raise serializers.ValidationError("You are not assigned to a lobby.")
+            
+        if membership.eligible_from_round and membership.eligible_from_round > current_round.round_number:
+            raise serializers.ValidationError("You are not eligible for the current round.")
+
         context['round'] = current_round
         return context
 
     def perform_create(self, serializer):
         current_round = self.get_serializer_context()['round']
-        
-        # Automatically associate the action with the current participant and round
         serializer.save(
             participant=self.request.user.participant,
             round=current_round
         )
 
-# class LeaderboardView(generics.ListAPIView):
-#     """
-#     Provides a view of the game leaderboard, ordered by score.
-#     """
-#     serializer_class = GameScoreSerializer
-#     permission_classes = [IsAuthenticated]
-
-#     def get_queryset(self):
-#         # Assuming there is one main active game. 
-#         # This could be enhanced to select a game via URL parameter.
-#         active_game = Game.objects.filter(is_active=True).first()
-#         if not active_game:
-#             return GameScore.objects.none() # Return empty queryset if no active game
-        
-#         return GameScore.objects.filter(game=active_game).order_by('-score')
-
 class LeaderboardView(APIView):
-    """
-    Provides the leaderboard for the currently logged-in user's lobby.
-    The lobby is determined automatically from the user's profile.
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        participant = request.user.participant
-        lobby = participant.current_lobby
-
-        if not lobby:
-            # If the user isn't in a lobby, return an empty list.
-            return Response([], status=status.HTTP_200_OK)
-
-        # Get all scores for participants who are in the user's lobby
-        queryset = GameScore.objects.filter(participant__current_lobby=lobby).order_by('-score')
+        from django.db.models import Sum
+        participants = Participant.objects.all()
         
-        # Serialize the data and return it
-        serializer = GameScoreSerializer(queryset, many=True)
-        return Response(serializer.data)
+        leaderboard = []
+        for p in participants:
+            res = GameScore.objects.filter(participant=p).aggregate(Sum('score'))
+            score = res['score__sum'] or 0
+            
+            participant_data = SimpleParticipantSerializer(p).data
+            leaderboard.append({
+                'participant': participant_data,
+                'score': score
+            })
+            
+        leaderboard.sort(key=lambda x: x['score'], reverse=True)
+        return Response(leaderboard)
     
 class AdminEndRoundView(APIView):
-    """
-    An admin-only escape hatch to end the current round immediately,
-    regardless of its timer, and start the next one right away. Normal
-    rounds end automatically on their own via round_flow.resolve_current_round.
-    """
     permission_classes = [IsAdminUser]
 
     def post(self, request, *args, **kwargs):
-        active_game = Game.objects.filter(is_active=True).first()
+        active_game = Game.objects.filter(state=Game.State.RUNNING).first()
         if not active_game:
-            return Response({'error': 'No active game to end a round for.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No active running game to end a round for.'}, status=status.HTTP_404_NOT_FOUND)
 
         ended_round = resolve_current_round(active_game)
         if not ended_round:
@@ -319,16 +327,12 @@ class AdminEndRoundView(APIView):
 
 
 class AdminStartGameView(APIView):
-    """
-    An admin-only endpoint to kick off round 1 (and therefore the whole
-    automated round sequence) for the active game.
-    """
     permission_classes = [IsAdminUser]
 
     def post(self, request, *args, **kwargs):
-        active_game = Game.objects.filter(is_active=True).first()
+        active_game = Game.objects.filter(state=Game.State.REGISTRATION).first()
         if not active_game:
-            return Response({'error': 'No active game to start.'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': 'No game in registration state to start.'}, status=status.HTTP_404_NOT_FOUND)
 
         started_round = start_game(active_game)
         if not started_round:
@@ -340,18 +344,11 @@ class AdminStartGameView(APIView):
         return Response({'status': f'Round {started_round.round_number} started.'})
 
 class RoundListView(generics.ListAPIView):
-    """
-    Provides a list of all rounds, with the newest first.
-    Useful for selecting a round to view its delegation graph.
-    """
     queryset = Round.objects.all().order_by('-round_number')
     serializer_class = RoundSerializer
     permission_classes = [IsAuthenticated]
 
 class DelegationGraphView(APIView):
-    """
-    Returns the data needed to draw a trust graph for a specific round.
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, round_id, *args, **kwargs):
@@ -359,19 +356,19 @@ class DelegationGraphView(APIView):
             round_obj = Round.objects.get(id=round_id)
         except Round.DoesNotExist:
             return Response({"detail": "Round not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+        membership = GameMembership.objects.filter(game=round_obj.game, participant=request.user.participant).first()
+        user_lobby = membership.lobby if membership else None
         
-        user_lobby = request.user.participant.current_lobby
         if not user_lobby:
             return Response({"detail": "You are not in a lobby."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 1. Get ALL participants in the lobby to serve as the nodes.
-        all_lobby_participants = Participant.objects.filter(current_lobby=user_lobby).select_related('user')
+        all_lobby_participants = Participant.objects.filter(memberships__lobby=user_lobby).select_related('user')
         nodes = [{'id': str(p.id), 'data': {'label': p.user.username}, 'position': {'x': 0, 'y': 0}} for p in all_lobby_participants]
         
-        # 2. Get only the actions from that lobby for the specific round to create the edges.
         actions = Action.objects.filter(
             round=round_obj, 
-            participant__current_lobby=user_lobby
+            participant__memberships__lobby=user_lobby
         ).select_related('participant', 'delegated_to')
 
         edges = []
@@ -385,4 +382,3 @@ class DelegationGraphView(APIView):
                 })
         
         return Response({'nodes': nodes, 'edges': edges})
-

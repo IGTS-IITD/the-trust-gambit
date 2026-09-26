@@ -38,10 +38,16 @@ class HostelSerializer(serializers.ModelSerializer):
 class ParticipantProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     hostel = HostelSerializer(read_only=True)
+    total_score = serializers.SerializerMethodField()
     
     class Meta:
         model = Participant
-        fields = ['id', 'user', 'hostel', 'current_lobby']
+        fields = ['id', 'user', 'hostel', 'total_score']
+
+    def get_total_score(self, obj):
+        from django.db.models import Sum
+        res = obj.game_scores.aggregate(Sum('score'))
+        return res['score__sum'] or 0
 
 class SelfRatingSerializer(serializers.ModelSerializer):
     participant = serializers.PrimaryKeyRelatedField(queryset=Participant.objects.all())
@@ -82,12 +88,14 @@ class PublicSelfRatingSerializer(serializers.ModelSerializer):
 class RoundSerializer(serializers.ModelSerializer):
     domain = serializers.StringRelatedField() # Show the domain name instead of its ID
     seconds_remaining = serializers.SerializerMethodField()
+    game_name = serializers.CharField(source='game.name', read_only=True)
 
     class Meta:
         model = Round
         fields = [
             'id', 'round_number', 'domain', 'question_text',
             'duration_seconds', 'starts_at', 'seconds_remaining',
+            'game_name',
         ]
 
     def get_seconds_remaining(self, obj):

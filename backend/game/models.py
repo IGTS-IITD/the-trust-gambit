@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.conf import settings
 
 class Hostel(models.Model):
     name = models.CharField(max_length=30, unique=True)
@@ -9,10 +10,16 @@ class Hostel(models.Model):
         return self.name
 
 class Game(models.Model):
+    class State(models.TextChoices):
+        REGISTRATION = 'REGISTRATION', 'Registration'
+        RUNNING = 'RUNNING', 'Running'
+        COMPLETED = 'COMPLETED', 'Completed'
+
     name = models.CharField(max_length=200, default="The Trust Gambit")
-    is_active = models.BooleanField(default=True)
+    state = models.CharField(max_length=20, choices=State.choices, default=State.REGISTRATION)
     lambda_param = models.FloatField(default=0.5) 
-    beta_param = models.FloatField(default=0.2)   
+    beta_param = models.FloatField(default=0.2)
+    player_limit = models.PositiveIntegerField(default=settings.LOBBY_PLAYER_LIMIT)
 
     def __str__(self):
         return self.name
@@ -21,6 +28,10 @@ class Lobby(models.Model):
     name = models.CharField(max_length=100)
     game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='lobbies')
     is_active = models.BooleanField(default=True)
+    sequence_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        unique_together = ('game', 'sequence_number')
 
     def __str__(self):
         return f"Lobby: {self.name} (Game: {self.game.name})"
@@ -28,10 +39,22 @@ class Lobby(models.Model):
 class Participant(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     hostel = models.ForeignKey(Hostel, on_delete=models.SET_NULL, null=True, blank=True)
-    current_lobby = models.ForeignKey(Lobby, on_delete=models.SET_NULL, null=True, blank=True, related_name='participants')
 
     def __str__(self):
         return self.user.username
+
+class GameMembership(models.Model):
+    game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='memberships')
+    participant = models.ForeignKey(Participant, on_delete=models.CASCADE, related_name='memberships')
+    lobby = models.ForeignKey(Lobby, on_delete=models.SET_NULL, null=True, blank=True, related_name='members')
+    registered_at = models.DateTimeField(auto_now_add=True)
+    eligible_from_round = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ('game', 'participant')
+
+    def __str__(self):
+        return f"{self.participant.user.username} in {self.game.name} (Lobby: {self.lobby.name if self.lobby else 'Unassigned'})"
 
 class Domain(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -117,3 +140,30 @@ class GameScore(models.Model):
 
     def __str__(self):
         return f"{self.participant.user.username}: {self.score} points in {self.game.name}"
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+@receiver(post_save, sender=Game)
+def auto_populate_game(sender, instance, created, **kwargs):
+    """
+    Whenever a new game is created, instantly register all existing participants
+    on the site to this new game (as unassigned), and pre-create lobbies.
+    """
+    if created:
+        from .lobby_utils import register_participant
+        import math
+        
+        # Pre-create the correct number of lobbies
+        n = Participant.objects.count()
+        limit = instance.player_limit
+        required_lobbies = max(1, math.ceil(n / limit))
+        for i in range(1, required_lobbies + 1):
+            Lobby.objects.create(
+                name=f"{instance.name}-Lobby-{i}",
+                game=instance,
+                sequence_number=i
+            )
+            
+        for participant in Participant.objects.all():
+            register_participant(participant, instance)

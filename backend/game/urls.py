@@ -5,7 +5,7 @@ from .views import (
     SelfRatingCreateListView, HostelListView,
     CurrentRoundView, SubmitActionView,
     LeaderboardView, AdminEndRoundView, AllRatingsListView,
-    AdminAssignLobbiesView, AdminStartGameView,
+    AdminAssignLobbyView, AdminStartGameView,
     VerifyEmailView, ResendVerificationView,
 )
 
@@ -30,5 +30,5 @@ urlpatterns = [
 
     path('admin/end-round/', AdminEndRoundView.as_view(), name='admin-end-round'),
     path('admin/start-game/', AdminStartGameView.as_view(), name='admin-start-game'),
-    path('admin/assign-lobbies/', AdminAssignLobbiesView.as_view(), name='admin-assign-lobbies'),
+    path('admin/assign-lobby/', AdminAssignLobbyView.as_view(), name='admin-assign-lobby'),
 ]

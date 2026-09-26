@@ -1,9 +1,9 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Round
+from .models import Round, Game, Lobby
 from .scoring import calculate_scores_for_round
-
+from .lobby_utils import assign_pending_memberships
 
 def resolve_current_round(game):
     """
@@ -30,60 +30,91 @@ def resolve_current_round(game):
             return round_obj
 
         _advance_past(round_obj)
-        # loop again in case the next round's timer has *also* already elapsed
+
+
+def _advance_past(locked_round):
+    """
+    Given a completed round, score it, mark it closed, and launch the next
+    round off its ideal end time (not just "now").
+    """
+    locked = (
+        Round.objects.select_for_update()
+        .filter(pk=locked_round.pk, is_completed=False)
+        .first()
+    )
+    if not locked:
+        return
+
+    calculate_scores_for_round(locked.id)
+    
+    locked.is_completed = True
+    locked.save(update_fields=["is_completed"])
+
+    locked_game = Game.objects.select_for_update().get(pk=locked.game.pk)
+    
+    assign_pending_memberships(locked_game, is_game_start=False)
+    
+    next_round = Round.objects.filter(
+        game=locked_game, round_number=locked.round_number + 1
+    ).first()
+    
+    if not next_round:
+        locked_game.state = Game.State.COMPLETED
+        locked_game.save(update_fields=['state'])
+        # (Lobbies persist permanently now)
+        return
+
+    next_round.starts_at = locked.starts_at + timezone.timedelta(seconds=locked.duration_seconds)
+    next_round.save(update_fields=["starts_at"])
 
 
 def force_advance_current_round(game):
     """
-    Manual override: immediately ends whatever round is currently open
-    (regardless of its timer) and starts the next one now. Used for an
-    admin "end round early" action. Returns the round that's now current
-    (or None if that was the last round).
+    Forces the currently active round to advance regardless of the time elapsed.
     """
-    round_obj = resolve_current_round(game)
+    round_obj = Round.objects.filter(
+        game=game, is_completed=False, starts_at__isnull=False
+    ).order_by("-round_number").first()
+    
     if not round_obj:
         return None
-    _advance_past(round_obj, next_starts_at=timezone.now())
-    return resolve_current_round(game)
+        
+    _advance_past(round_obj)
+    
+    return Round.objects.filter(
+        game=game, round_number=round_obj.round_number + 1
+    ).first()
 
 
 @transaction.atomic
-def _advance_past(round_obj, next_starts_at=None):
-    # Lock the row so a near-simultaneous poll from another participant
-    # can't score this same round twice.
-    locked = Round.objects.select_for_update().get(pk=round_obj.pk)
-    if locked.is_completed:
-        return
-
-    calculate_scores_for_round(locked.id)
-
-    next_round = Round.objects.filter(
-        game=locked.game, round_number=locked.round_number + 1
-    ).first()
-    if not next_round:
-        return
-
-    # Schedule off the ideal end time, not "now", so a detection delay on
-    # one round doesn't compound into every later round running late too.
-    next_round.starts_at = next_starts_at or (
-        locked.starts_at + timezone.timedelta(seconds=locked.duration_seconds)
-    )
-    next_round.save(update_fields=["starts_at"])
-
-
 def start_game(game):
     """
     Kicks off round 1 for a game, if it hasn't been started already.
-    Returns the started round, or None if there's no round 1 to start or
-    the game is already underway.
+    Returns the started round, or None if there's no round 1 to start,
+    the game is already underway, or another game is running.
     """
-    if Round.objects.filter(game=game, starts_at__isnull=False).exists():
+    # Enforce only 1 running game
+    if Game.objects.filter(state=Game.State.RUNNING).exists():
         return None
 
-    round_one = Round.objects.filter(game=game, round_number=1).first()
+    locked_game = Game.objects.select_for_update().get(pk=game.pk)
+    
+    if locked_game.state != Game.State.REGISTRATION:
+        return None
+        
+    if Round.objects.filter(game=locked_game, starts_at__isnull=False).exists():
+        return None
+
+    round_one = Round.objects.filter(game=locked_game, round_number=1).first()
     if not round_one:
         return None
 
+    assign_pending_memberships(locked_game, is_game_start=True)
+
     round_one.starts_at = timezone.now()
     round_one.save(update_fields=["starts_at"])
+    
+    locked_game.state = Game.State.RUNNING
+    locked_game.save(update_fields=['state'])
+    
     return round_one

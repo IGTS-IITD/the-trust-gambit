@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRegister, apiGetHostels } from "../api.js";
+import {
+  AuthLayout,
+  EmptyState,
+  Field,
+  Notice,
+} from "../components/UI.jsx";
 
 export default function Register() {
   const [form, setForm] = useState({
@@ -9,184 +15,193 @@ export default function Register() {
     password: "",
     hostel_id: "",
   });
+
   const [hostels, setHostels] = useState([]);
+  const [hostelsLoading, setHostelsLoading] = useState(true);
+  const [hostelsError, setHostelsError] = useState("");
+
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [submittedEmail, setSubmittedEmail] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+
     apiGetHostels()
-      .then(setHostels)
-      .catch((err) => {
-        setHostels([]);
-        console.error("Failed to fetch hostels", err);
+      .then((data) => {
+        if (!Array.isArray(data)) {
+          throw new Error("Unexpected hostel response.");
+        }
+
+        if (!cancelled) setHostels(data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHostelsError(
+            "Hostels could not be loaded. You can register without one."
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setHostelsLoading(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const onChange = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-  const onSubmit = async (e) => {
-    e.preventDefault();
+  const update = (key, value) => {
+    setForm((current) => ({ ...current, [key]: value }));
+  };
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    if (submitting) return;
+
+    setSubmitting(true);
     setError("");
+
+    const email = form.email.trim();
+
     try {
-      const payload = {
-        username: form.username,
-        email: form.email,
+      await apiRegister({
+        username: form.username.trim(),
+        email,
         password: form.password,
         ...(form.hostel_id
-          ? { hostel_id: Number.parseInt(form.hostel_id, 10) }
+          ? { hostel_id: Number(form.hostel_id) }
           : {}),
-      };
-      await apiRegister(payload);
-      setSubmittedEmail(form.email);
+      });
+
+      setSubmittedEmail(email);
+      setForm((current) => ({ ...current, password: "" }));
     } catch (err) {
-      setError(err.message || "Registration failed");
+      setError(err.message || "Unable to create your account.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   if (submittedEmail) {
     return (
-      <div className="max-w-md mx-auto">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xl p-8 text-center">
-          <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4 border border-blue-200">
-            <svg
-              className="w-7 h-7 text-blue-600"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-              />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">
-            Check your email
-          </h1>
-          <p className="text-slate-600 text-sm">
-            We sent a verification link to <strong>{submittedEmail}</strong>.
-            Click it to activate your account, then come back and log in.
-          </p>
-          <Link
-            className="inline-block mt-6 text-blue-600 hover:text-blue-700 font-semibold text-sm"
-            to="/login"
-          >
-            Back to login
+      <div className="panel verification">
+        <EmptyState
+          title="Check your inbox."
+          description={`A verification link has been requested for ${submittedEmail}. Open the link to activate your account.`}
+        >
+          <Link className="btn btn-primary" to="/login">
+            Continue to sign in
           </Link>
+        </EmptyState>
+
+        <div className="panel-body" style={{ paddingTop: 0 }}>
+          <p className="form-note" style={{ textAlign: "center" }}>
+            If the message does not arrive, check your spam folder.
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-md mx-auto">
-      <div className="bg-white rounded-xl border border-slate-200 shadow-xl p-8">
-        <div className="text-center mb-6">
-          <div className="w-14 h-14 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3 border border-blue-200">
-            <svg
-              className="w-7 h-7 text-blue-600"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14c-3.866 0-7 2.239-7 5v1h14v-1c0-2.761-3.134-5-7-5z"
-              />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-slate-800">
-            Create your account
-          </h1>
-          <p className="text-slate-600 text-sm mt-1">Join The Trust Gambit</p>
-        </div>
-
-        <form onSubmit={onSubmit} className="space-y-5">
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">
-              Username
-            </label>
-            <input
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              value={form.username}
-              onChange={(e) => onChange("username", e.target.value)}
-              placeholder="johndoe"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">
-              Email
-            </label>
-            <input
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              type="email"
-              value={form.email}
-              onChange={(e) => onChange("email", e.target.value)}
-              placeholder="you@example.com"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">
-              Password
-            </label>
-            <input
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              type="password"
-              value={form.password}
-              onChange={(e) => onChange("password", e.target.value)}
-              placeholder="••••••••"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700 mb-2">
-              Hostel (optional)
-            </label>
-            <select
-              className="w-full px-4 py-3 border border-slate-300 rounded-lg bg-white outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              value={form.hostel_id}
-              onChange={(e) => onChange("hostel_id", e.target.value)}
-            >
-              <option value="">Select a hostel</option>
-              {hostels.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-sm">
-              {error}
-            </div>
-          )}
-
-          <button
-            className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all hover:shadow-lg active:scale-[0.98]"
-            type="submit"
-          >
-            Create Account
-          </button>
-        </form>
-
-        <div className="mt-6 text-center border-t border-slate-200 pt-6">
-          <p className="text-sm text-slate-600">
-            Have an account?{" "}
-            <Link
-              className="text-blue-600 hover:text-blue-700 font-semibold"
-              to="/login"
-            >
-              Login
-            </Link>
-          </p>
-        </div>
+    <AuthLayout
+      eyebrow="Join the field"
+      title={<>Every decision<br />starts somewhere.</>}
+      description="Create your participant account. A sharp answer matters. Knowing whom to trust matters too."
+    >
+      <div style={{ marginBottom: 26 }}>
+        <h2 className="panel-title" style={{ fontSize: 20 }}>
+          Create account
+        </h2>
+        <p className="form-note" style={{ marginTop: 8 }}>
+          Verify your email before entering the game.
+        </p>
       </div>
-    </div>
+
+      <form className="form" onSubmit={onSubmit}>
+        <Field label="Username">
+          <input
+            className="input"
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={form.username}
+            onChange={(event) => update("username", event.target.value)}
+            placeholder="Choose a username"
+            disabled={submitting}
+            required
+          />
+        </Field>
+
+        <Field label="Email address">
+          <input
+            className="input"
+            type="email"
+            name="email"
+            autoComplete="email"
+            value={form.email}
+            onChange={(event) => update("email", event.target.value)}
+            placeholder="you@example.com"
+            disabled={submitting}
+            required
+          />
+        </Field>
+
+        <Field label="Password">
+          <input
+            className="input"
+            type="password"
+            name="password"
+            autoComplete="new-password"
+            value={form.password}
+            onChange={(event) => update("password", event.target.value)}
+            placeholder="Create a password"
+            disabled={submitting}
+            required
+          />
+        </Field>
+
+        <Field
+          label="Hostel"
+          hint="Optional. You can update this in your profile later."
+        >
+          <select
+            className="input"
+            value={form.hostel_id}
+            onChange={(event) => update("hostel_id", event.target.value)}
+            disabled={submitting || hostelsLoading || Boolean(hostelsError)}
+          >
+            <option value="">
+              {hostelsLoading ? "Loading hostels…" : "No hostel selected"}
+            </option>
+            {hostels.map((hostel) => (
+              <option key={hostel.id} value={hostel.id}>
+                {hostel.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Notice>{hostelsError}</Notice>
+        <Notice tone="error">{error}</Notice>
+
+        <button
+          className="btn btn-primary btn-block"
+          type="submit"
+          disabled={submitting}
+        >
+          {submitting ? "Creating account…" : "Create account"}
+        </button>
+      </form>
+
+      <div className="auth-bottom">
+        Already registered?{" "}
+        <Link className="text-link" to="/login">
+          Sign in
+        </Link>
+      </div>
+    </AuthLayout>
   );
 }
