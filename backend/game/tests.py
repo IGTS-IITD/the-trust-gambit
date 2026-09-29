@@ -211,7 +211,7 @@ class ScoringEngineTest(TestCase):
 
 class LeaderboardTest(TestCase):
     def test_leaderboard_returns_all_active_game_participants(self):
-        game = Game.objects.create(name="Global leaderboard")
+        game = Game.objects.create(name="Global leaderboard", state=Game.State.RUNNING)
         other_game = Game.objects.create(name="Previous game", state=Game.State.COMPLETED)
 
         users = [
@@ -314,6 +314,46 @@ class LeaderboardTest(TestCase):
             [row["participant"]["username"] for row in lobby_response.json()],
             ["completed_0", "completed_1"],
         )
+
+    def test_leaderboard_retains_completed_scores_while_next_game_is_registration(self):
+        completed_game = Game.objects.create(
+            name="Finished standings", state=Game.State.COMPLETED
+        )
+        next_game = Game.objects.create(name="Next registration")
+        user = User.objects.create_user("retained_score")
+        participant = Participant.objects.create(user=user)
+        GameMembership.objects.create(game=completed_game, participant=participant)
+        GameMembership.objects.create(game=next_game, participant=participant)
+        GameScore.objects.create(game=completed_game, participant=participant, score=17)
+
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get("/api/leaderboard/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()[0]["score"], 17.0)
+
+    def test_leaderboard_reset_is_explicit_and_admin_only(self):
+        game = Game.objects.create(name="Reset standings")
+        user = User.objects.create_user("reset_score")
+        participant = Participant.objects.create(user=user)
+        GameMembership.objects.create(game=game, participant=participant)
+        GameScore.objects.create(game=game, participant=participant, score=8)
+
+        user_token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {user_token.key}")
+        denied = client.post("/api/admin/reset-leaderboard/", {"game_id": game.id})
+        self.assertEqual(denied.status_code, 403)
+
+        admin = User.objects.create_superuser("reset_admin", password="password")
+        admin_token = Token.objects.create(user=admin)
+        client.credentials(HTTP_AUTHORIZATION=f"Token {admin_token.key}")
+        response = client.post("/api/admin/reset-leaderboard/", {"game_id": game.id})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(GameScore.objects.filter(game=game).exists())
 
 
 class SubmitActionTest(TestCase):

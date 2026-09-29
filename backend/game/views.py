@@ -333,10 +333,13 @@ class LeaderboardView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        active_game = (
-            Game.objects.filter(state=Game.State.RUNNING).first()
-            or Game.objects.filter(state=Game.State.REGISTRATION).first()
-        )
+        active_game = Game.objects.filter(state=Game.State.RUNNING).first()
+        if not active_game:
+            active_game = Game.objects.filter(
+                state=Game.State.COMPLETED
+            ).order_by('-id').first()
+        if not active_game:
+            active_game = Game.objects.filter(state=Game.State.REGISTRATION).first()
         if active_game and active_game.state == Game.State.RUNNING:
             resolve_current_round(active_game)
             active_game.refresh_from_db()
@@ -433,6 +436,20 @@ class AdminRestartGameView(APIView):
             'status': 'RESTARTED',
             'game_id': game.id,
             'round': RoundSerializer(restarted_round).data,
+        })
+
+
+class AdminResetLeaderboardView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        game_id = request.data.get('game_id')
+        game = get_object_or_404(Game, id=game_id)
+        deleted, _ = GameScore.objects.filter(game=game).delete()
+        return Response({
+            'status': 'RESET',
+            'game_id': game.id,
+            'deleted_score_rows': deleted,
         })
 
 
