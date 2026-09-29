@@ -1,3 +1,6 @@
+import random
+from collections import Counter
+
 from .models import Round, Action, GameScore
 
 def calculate_scores_for_round(round_id):
@@ -55,6 +58,25 @@ def calculate_scores_for_round(round_id):
                 break
     
     # --- R2: Score terminal actions (Solve/Pass) for non-cycle members ---
+    consensus_answers = {}
+    cycle_affected = all_cycle_members
+    if round_obj.question_type == Round.QuestionType.CONSENSUS:
+        consensus_answers = _resolve_consensus_answers(
+            action_map, all_cycle_members
+        )
+        round_obj.resolved_answer = _select_consensus_answer(
+            consensus_answers.values(), round_obj.consensus_mode
+        )
+
+        # A delegation chain that reaches a cycle has no valid answer and is
+        # penalized directly rather than inheriting the cycle's score.
+        cycle_affected = all_cycle_members | {
+            p_id for p_id in action_map
+            if _reaches_cycle(p_id, action_map, all_cycle_members)
+        }
+        for p_id in cycle_affected:
+            base_round_points[p_id] = -1
+
     for p_id, action in action_map.items():
         if p_id in all_cycle_members:
             continue
@@ -62,7 +84,13 @@ def calculate_scores_for_round(round_id):
         if action.action_type == Action.ActionType.PASS:
             base_round_points[p_id] = 0
         elif action.action_type == Action.ActionType.SOLVE:
-            is_correct = (action.submitted_answer or '').lower() == (round_obj.correct_answer or '').lower()
+            if round_obj.question_type == Round.QuestionType.CONSENSUS:
+                is_correct = (
+                    consensus_answers.get(p_id) is not None
+                    and consensus_answers.get(p_id) == round_obj.resolved_answer
+                )
+            else:
+                is_correct = (action.submitted_answer or '').strip().casefold() == (round_obj.correct_answer or '').strip().casefold()
             action.is_solve_correct = is_correct
             base_round_points[p_id] = 1 if is_correct else -1
     
@@ -70,7 +98,14 @@ def calculate_scores_for_round(round_id):
     memo = {}
     for p_id in action_map:
         if action_map[p_id].action_type == Action.ActionType.DELEGATE:
-            _calculate_delegation_points(p_id, action_map, base_round_points, game, memo, all_cycle_members)
+            _calculate_delegation_points(
+                p_id,
+                action_map,
+                base_round_points,
+                game,
+                memo,
+                cycle_affected,
+            )
 
     # All base scores are now calculated. Copy them to the final score map.
     for p_id, points in base_round_points.items():
@@ -103,7 +138,7 @@ def calculate_scores_for_round(round_id):
         score_obj.save()
 
     round_obj.is_completed = True
-    round_obj.save()
+    round_obj.save(update_fields=['is_completed', 'resolved_answer'])
     print(f"Scoring for Round {round_id} complete.")
 
 
@@ -150,5 +185,68 @@ def _calculate_delegation_points(p_id, action_map, base_round_points, game, memo
     base_round_points[p_id] = final_points
     memo[p_id] = final_points
     return final_points
+
+
+def _normalize_consensus_answer(answer):
+    """Return a valid numeric MCQ answer, or None when it cannot vote."""
+    normalized = (answer or '').strip()
+    return normalized if normalized in {'1', '2', '3', '4'} else None
+
+
+def _resolve_consensus_answers(action_map, cycle_members):
+    """Resolve each submitted action to its terminal numeric answer."""
+    memo = {}
+
+    def resolve(participant_id, path):
+        if participant_id in memo:
+            return memo[participant_id]
+        if participant_id in cycle_members or participant_id in path:
+            return None
+
+        action = action_map.get(participant_id)
+        if not action:
+            return None
+        if action.action_type == Action.ActionType.SOLVE:
+            answer = _normalize_consensus_answer(action.submitted_answer)
+        elif action.action_type == Action.ActionType.DELEGATE and action.delegated_to:
+            answer = resolve(action.delegated_to.id, path | {participant_id})
+        else:
+            answer = None
+
+        memo[participant_id] = answer
+        return answer
+
+    return {
+        participant_id: answer
+        for participant_id in action_map
+        if (answer := resolve(participant_id, set())) is not None
+    }
+
+
+def _reaches_cycle(participant_id, action_map, cycle_members):
+    """Return whether a delegation chain ends in a detected cycle."""
+    visited = set()
+    current = participant_id
+    while current in action_map:
+        if current in cycle_members:
+            return True
+        if current in visited:
+            return True
+        visited.add(current)
+        action = action_map[current]
+        if action.action_type != Action.ActionType.DELEGATE or not action.delegated_to:
+            return False
+        current = action.delegated_to.id
+    return False
+
+
+def _select_consensus_answer(answers, mode):
+    counts = Counter(answers)
+    if not counts:
+        return None
+
+    target_count = max(counts.values()) if mode == Round.ConsensusMode.MAJORITY else min(counts.values())
+    candidates = sorted(answer for answer, count in counts.items() if count == target_count)
+    return random.choice(candidates)
 
 

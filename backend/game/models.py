@@ -78,12 +78,31 @@ class SelfRating(models.Model):
         return f"{self.participant.user.username} rates {self.domain.name} as {self.rating}"
 
 class Round(models.Model):
+    class QuestionType(models.TextChoices):
+        STANDARD = 'STANDARD', 'Standard'
+        CONSENSUS = 'CONSENSUS', 'Consensus'
+
+    class ConsensusMode(models.TextChoices):
+        MAJORITY = 'MAJORITY', 'Majority'
+        MINORITY = 'MINORITY', 'Minority'
+
     game = models.ForeignKey(Game, on_delete=models.CASCADE, related_name='rounds')
     # lobby = models.ForeignKey(Lobby, on_delete=models.CASCADE, related_name='rounds', null=True)
     
     domain = models.ForeignKey(Domain, on_delete=models.CASCADE)
     question_text = models.TextField()
     correct_answer = models.CharField(max_length=255, default='correct answer here')
+    question_type = models.CharField(
+        max_length=20,
+        choices=QuestionType.choices,
+        default=QuestionType.STANDARD,
+    )
+    consensus_mode = models.CharField(
+        max_length=10,
+        choices=ConsensusMode.choices,
+        default=ConsensusMode.MAJORITY,
+    )
+    resolved_answer = models.CharField(max_length=255, null=True, blank=True, editable=False)
     is_completed = models.BooleanField(default=False)
     round_number = models.PositiveIntegerField()
 
@@ -155,18 +174,6 @@ def auto_populate_game(sender, instance, created, **kwargs):
     """
     if created:
         from .lobby_utils import register_participant
-        import math
-        
-        # Pre-create the correct number of lobbies
-        n = Participant.objects.count()
-        limit = instance.player_limit
-        required_lobbies = max(1, math.ceil(n / limit))
-        for i in range(1, required_lobbies + 1):
-            Lobby.objects.create(
-                name=f"{instance.name}-Lobby-{i}",
-                game=instance,
-                sequence_number=i
-            )
-            
+
         for participant in Participant.objects.all():
             register_participant(participant, instance)

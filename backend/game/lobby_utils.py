@@ -7,7 +7,7 @@ from .models import Participant, Lobby, Game, GameMembership
 def register_participant(participant, game):
     """
     Registers a participant for a game (lobby=None).
-    If the game is in REGISTRATION state, dynamically scales lobbies if needed.
+    Lobbies are created and populated only when the game starts.
     """
     locked_game = Game.objects.select_for_update().get(pk=game.pk)
     
@@ -33,22 +33,6 @@ def register_participant(participant, game):
     membership.eligible_from_round = eligibility
     membership.save(update_fields=['eligible_from_round'])
     
-    if locked_game.state == Game.State.REGISTRATION:
-        total_memberships = GameMembership.objects.filter(game=locked_game).count()
-        lobby_count = Lobby.objects.filter(game=locked_game).count()
-        limit = locked_game.player_limit
-        
-        # Scale up lobbies if necessary
-        required_lobbies = max(1, math.ceil(total_memberships / limit))
-        if required_lobbies > lobby_count:
-            # Create the missing lobbies
-            for i in range(lobby_count + 1, required_lobbies + 1):
-                Lobby.objects.create(
-                    name=f"{locked_game.name}-Lobby-{i}",
-                    game=locked_game,
-                    sequence_number=i
-                )
-    
     return {"status": "Registered successfully (unassigned)"}
 
 
@@ -64,10 +48,18 @@ def assign_pending_memberships(game, is_game_start=False):
     all_lobbies = list(Lobby.objects.filter(game=game).annotate(num_members=Count('members')).order_by('sequence_number'))
     
     if not all_lobbies:
-        # Failsafe if someone deleted all lobbies manually
-        l = Lobby.objects.create(name=f"{game.name}-Lobby-1", game=game, sequence_number=1)
-        l.num_members = 0
-        all_lobbies = [l]
+        total_memberships = GameMembership.objects.filter(game=game).count()
+        required_lobbies = max(1, math.ceil(total_memberships / limit))
+        all_lobbies = [
+            Lobby.objects.create(
+                name=f"{game.name}-Lobby-{sequence_number}",
+                game=game,
+                sequence_number=sequence_number,
+            )
+            for sequence_number in range(1, required_lobbies + 1)
+        ]
+        for lobby in all_lobbies:
+            lobby.num_members = 0
 
     if is_game_start:
         # 1. Filter out overfilled lobbies.
@@ -87,7 +79,8 @@ def assign_pending_memberships(game, is_game_start=False):
     else:
         # Mid-Round
         if len(unassigned) == 1:
-            # Single player goes to lowest absolute lobby
+            # Single player goes to the least-filled lobby. The configured
+            # limit is a balancing target, not a hard constraint.
             all_lobbies.sort(key=lambda x: (x.num_members, x.sequence_number))
             chosen = all_lobbies[0]
             unassigned[0].lobby = chosen

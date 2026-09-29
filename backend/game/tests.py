@@ -5,9 +5,10 @@ from django.contrib.auth.models import User
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 from django.contrib.auth.tokens import default_token_generator
+from django.db.models import Count
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from .models import Game, Round, Participant, Action, GameScore, Domain, Lobby
+from .models import Game, Round, Participant, Action, GameScore, Domain, Lobby, GameMembership
 from .scoring import calculate_scores_for_round
 from .round_flow import resolve_current_round, start_game, force_advance_current_round
 
@@ -95,17 +96,106 @@ class ScoringEngineTest(TestCase):
         self.assertEqual(score_b, -1)
         self.assertEqual(score_c, -1)
 
+    def test_consensus_majority_sets_answer_at_round_close(self):
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Choose a number",
+            question_type=Round.QuestionType.CONSENSUS,
+            consensus_mode=Round.ConsensusMode.MAJORITY,
+        )
+        Action.objects.create(round=round, participant=self.p_a, action_type='SOLVE', submitted_answer="1")
+        Action.objects.create(round=round, participant=self.p_b, action_type='SOLVE', submitted_answer="1")
+        Action.objects.create(round=round, participant=self.p_c, action_type='SOLVE', submitted_answer="2")
+
+        calculate_scores_for_round(round.id)
+
+        round.refresh_from_db()
+        self.assertEqual(round.resolved_answer, "1")
+        self.assertEqual(GameScore.objects.get(participant=self.p_a).score, 1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_b).score, 1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
+
+    def test_consensus_minority_sets_answer_at_round_close(self):
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Choose a number",
+            question_type=Round.QuestionType.CONSENSUS,
+            consensus_mode=Round.ConsensusMode.MINORITY,
+        )
+        Action.objects.create(round=round, participant=self.p_a, action_type='SOLVE', submitted_answer="1")
+        Action.objects.create(round=round, participant=self.p_b, action_type='SOLVE', submitted_answer="1")
+        Action.objects.create(round=round, participant=self.p_c, action_type='SOLVE', submitted_answer="2")
+
+        calculate_scores_for_round(round.id)
+
+        round.refresh_from_db()
+        self.assertEqual(round.resolved_answer, "2")
+        self.assertEqual(GameScore.objects.get(participant=self.p_a).score, -1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_b).score, -1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, 1)
+
+    def test_delegated_answer_counts_as_consensus_vote(self):
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Choose a number",
+            question_type=Round.QuestionType.CONSENSUS,
+        )
+        Action.objects.create(round=round, participant=self.p_a, action_type='DELEGATE', delegated_to=self.p_b)
+        Action.objects.create(round=round, participant=self.p_b, action_type='SOLVE', submitted_answer="2")
+        Action.objects.create(round=round, participant=self.p_c, action_type='SOLVE', submitted_answer="1")
+
+        calculate_scores_for_round(round.id)
+
+        round.refresh_from_db()
+        self.assertEqual(round.resolved_answer, "2")
+        self.assertAlmostEqual(GameScore.objects.get(participant=self.p_a).score, 0.5)
+        self.assertAlmostEqual(GameScore.objects.get(participant=self.p_b).score, 1.2)
+        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
+
+    def test_consensus_cycle_and_inbound_delegation_are_minus_one(self):
+        user_d = User.objects.create_user('user_d')
+        participant_d = Participant.objects.create(user=user_d)
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Choose a number",
+            question_type=Round.QuestionType.CONSENSUS,
+        )
+        Action.objects.create(round=round, participant=self.p_a, action_type='DELEGATE', delegated_to=self.p_b)
+        Action.objects.create(round=round, participant=self.p_b, action_type='DELEGATE', delegated_to=self.p_a)
+        Action.objects.create(round=round, participant=self.p_c, action_type='DELEGATE', delegated_to=self.p_a)
+        Action.objects.create(round=round, participant=participant_d, action_type='SOLVE', submitted_answer="3")
+
+        calculate_scores_for_round(round.id)
+
+        round.refresh_from_db()
+        self.assertEqual(round.resolved_answer, "3")
+        self.assertEqual(GameScore.objects.get(participant=self.p_a).score, -1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_b).score, -1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
+        self.assertEqual(GameScore.objects.get(participant=participant_d).score, 1)
+
 
 class LeaderboardTest(TestCase):
     def test_leaderboard_returns_all_active_game_participants(self):
         game = Game.objects.create(name="Global leaderboard")
-        other_game = Game.objects.create(name="Previous game", is_active=False)
+        other_game = Game.objects.create(name="Previous game", state=Game.State.COMPLETED)
 
         users = [
             User.objects.create_user(f"leaderboard_{index}")
             for index in range(3)
         ]
         participants = [Participant.objects.create(user=user) for user in users]
+        for participant in participants:
+            GameMembership.objects.create(game=game, participant=participant)
+        GameMembership.objects.create(game=other_game, participant=participants[1])
 
         GameScore.objects.create(game=game, participant=participants[0], score=4)
         GameScore.objects.create(game=other_game, participant=participants[1], score=99)
@@ -134,10 +224,9 @@ class LeaderboardTest(TestCase):
             for index in range(3)
         ]
         participants = [Participant.objects.create(user=user) for user in users]
-        participants[0].current_lobby = lobby
-        participants[0].save(update_fields=["current_lobby"])
-        participants[1].current_lobby = lobby
-        participants[1].save(update_fields=["current_lobby"])
+        GameMembership.objects.create(game=game, participant=participants[0], lobby=lobby)
+        GameMembership.objects.create(game=game, participant=participants[1], lobby=lobby)
+        GameMembership.objects.create(game=game, participant=participants[2])
 
         token = Token.objects.create(user=users[0])
         client = APIClient()
@@ -149,6 +238,61 @@ class LeaderboardTest(TestCase):
             [row["participant"]["username"] for row in response.json()],
             ["lobby_0", "lobby_1"],
         )
+
+
+class LobbyLifecycleTest(TestCase):
+    def test_lobbies_are_created_only_when_game_starts(self):
+        game = Game.objects.create(name="Deferred lobbies", player_limit=2)
+        domain = Domain.objects.create(name="Lifecycle")
+        Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Question",
+        )
+        participants = [
+            Participant.objects.create(
+                user=User.objects.create_user(f"lifecycle_{index}")
+            )
+            for index in range(3)
+        ]
+        for participant in participants:
+            GameMembership.objects.create(game=game, participant=participant)
+
+        self.assertEqual(Lobby.objects.filter(game=game).count(), 0)
+
+        start_game(game)
+
+        self.assertEqual(Lobby.objects.filter(game=game).count(), 2)
+        self.assertEqual(
+            GameMembership.objects.filter(game=game, lobby__isnull=False).count(),
+            3,
+        )
+
+    def test_players_are_distributed_evenly_for_any_limit(self):
+        game = Game.objects.create(name="Balanced lobbies", player_limit=10)
+        domain = Domain.objects.create(name="Balance")
+        Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Question",
+        )
+        for index in range(21):
+            participant = Participant.objects.create(
+                user=User.objects.create_user(f"balanced_{index}")
+            )
+            GameMembership.objects.create(game=game, participant=participant)
+
+        start_game(game)
+
+        lobby_sizes = list(
+            Lobby.objects.filter(game=game)
+            .annotate(num_members=Count('members'))
+            .values_list('num_members', flat=True)
+        )
+        self.assertEqual(len(lobby_sizes), 3)
+        self.assertEqual(lobby_sizes, [7] * 3)
 
 
 class LobbyAdminTest(TestCase):

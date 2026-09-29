@@ -95,7 +95,7 @@ class RoundSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'round_number', 'domain', 'question_text',
             'duration_seconds', 'starts_at', 'seconds_remaining',
-            'game_name',
+            'game_name', 'question_type', 'consensus_mode', 'resolved_answer',
         ]
 
     def get_seconds_remaining(self, obj):
@@ -130,6 +130,13 @@ class ActionSerializer(serializers.ModelSerializer):
         if action_type == Action.ActionType.SOLVE:
             if not submitted_answer:
                 raise serializers.ValidationError("A submitted_answer is required for the 'Solve' action.")
+                if (
+                    self.round.question_type == Round.QuestionType.CONSENSUS
+                    and submitted_answer.strip() not in {'1', '2', '3', '4'}
+                ):
+                    raise serializers.ValidationError(
+                        "Consensus answers must be one of 1, 2, 3, or 4."
+                    )
             if delegated_to:
                 raise serializers.ValidationError("Cannot specify a delegation target when solving.")
         elif action_type == Action.ActionType.DELEGATE:

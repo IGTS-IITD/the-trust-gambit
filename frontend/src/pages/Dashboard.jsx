@@ -214,6 +214,8 @@ export default function Dashboard() {
     roundClosed ||
     Boolean(syncError);
 
+  const isConsensusRound = round?.question_type === "CONSENSUS";
+
   const duration = Number(round?.duration_seconds);
 
   const progress =
@@ -343,6 +345,7 @@ export default function Dashboard() {
           <div className="metrics" style={{ marginBottom: 0 }}>
             <div className="metric">
               <div className="metric-label">Round</div>
+                            <div className="metric-label">Round</div>
               <div className="metric-value mono">
                 {String(round.round_number).padStart(2, "0")}
               </div>
@@ -443,7 +446,12 @@ export default function Dashboard() {
                         onChange={(event) =>
                           setSubmittedAnswer(event.target.value)
                         }
-                        placeholder="Enter your answer"
+                        placeholder={
+                          isConsensusRound
+                            ? "Type 1, 2, 3, or 4"
+                            : "Enter your answer"
+                        }
+                        inputMode={isConsensusRound ? "numeric" : "text"}
                         disabled={controlsDisabled}
                         required
                       />

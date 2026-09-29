@@ -229,7 +229,10 @@ class CurrentRoundView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
+        active_game = (
+            Game.objects.filter(state=Game.State.RUNNING).first()
+            or Game.objects.filter(state=Game.State.REGISTRATION).first()
+        )
         if not active_game:
             return Response({"detail": "No active game at the moment."}, status=404)
 
@@ -299,7 +302,10 @@ class LeaderboardView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
+        active_game = (
+            Game.objects.filter(state=Game.State.RUNNING).first()
+            or Game.objects.filter(state=Game.State.REGISTRATION).first()
+        )
         if not active_game:
             return Response([], status=status.HTTP_200_OK)
 
