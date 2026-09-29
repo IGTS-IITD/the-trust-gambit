@@ -1,5 +1,7 @@
 from django.shortcuts import get_object_or_404
 from django.db import models
+from django.db.models import Q, Sum, Value
+from django.db.models.functions import Coalesce
 from rest_framework import generics, status, serializers
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
@@ -290,22 +292,49 @@ class LeaderboardView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        from django.db.models import Sum
-        participants = Participant.objects.all()
-        
-        leaderboard = []
-        for p in participants:
-            res = GameScore.objects.filter(participant=p).aggregate(Sum('score'))
-            score = res['score__sum'] or 0
-            
-            participant_data = SimpleParticipantSerializer(p).data
-            leaderboard.append({
-                'participant': participant_data,
-                'score': score
-            })
-            
-        leaderboard.sort(key=lambda x: x['score'], reverse=True)
-        return Response(leaderboard)
+        scope = request.query_params.get('scope', 'global')
+        if scope not in {'global', 'lobby'}:
+            return Response(
+                {'detail': "scope must be either 'global' or 'lobby'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
+        if not active_game:
+            return Response([], status=status.HTTP_200_OK)
+
+        participants = Participant.objects.filter(
+            memberships__game=active_game
+        ).select_related('user').distinct()
+        if scope == 'lobby':
+            membership = GameMembership.objects.filter(
+                game=active_game,
+                participant=request.user.participant,
+            ).select_related('lobby').first()
+            if not membership or not membership.lobby:
+                return Response([], status=status.HTTP_200_OK)
+            participants = participants.filter(
+                memberships__game=active_game,
+                memberships__lobby=membership.lobby,
+            ).distinct()
+
+        participants = participants.annotate(
+            score=Coalesce(
+                Sum(
+                    'game_scores__score',
+                    filter=Q(game_scores__game=active_game),
+                ),
+                Value(0.0),
+            )
+        ).order_by('-score', 'user__username')
+
+        return Response([
+            {
+                'participant': SimpleParticipantSerializer(participant).data,
+                'score': participant.score,
+            }
+            for participant in participants
+        ])
     
 class AdminEndRoundView(APIView):
     permission_classes = [IsAdminUser]

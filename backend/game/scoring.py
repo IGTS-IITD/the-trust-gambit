@@ -16,7 +16,9 @@ def calculate_scores_for_round(round_id):
         return
 
     game = round_obj.game
-    actions = Action.objects.filter(round=round_obj)
+    actions = Action.objects.filter(round=round_obj).select_related(
+        'participant', 'delegated_to'
+    )
     action_map = {action.participant.id: action for action in actions}
     # This dictionary will store the final scores for the round, including bonuses.
     final_round_points = {p_id: 0 for p_id in action_map.keys()}

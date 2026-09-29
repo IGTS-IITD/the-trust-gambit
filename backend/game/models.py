@@ -127,6 +127,9 @@ class Action(models.Model):
     is_solve_correct = models.BooleanField(null=True, blank=True)
     points_awarded = models.FloatField(default=0)
 
+    class Meta:
+        unique_together = ('round', 'participant')
+
     def __str__(self):
         return f"{self.participant.user.username} chose to {self.action_type} in Round {self.round.round_number}"
 

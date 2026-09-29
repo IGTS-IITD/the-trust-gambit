@@ -16,6 +16,7 @@ export default function Leaderboard() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [reload, setReload] = useState(0);
+  const [scope, setScope] = useState("global");
 
   useEffect(() => {
     let cancelled = false;
@@ -23,7 +24,7 @@ export default function Leaderboard() {
     setLoading(true);
     setError("");
 
-    apiLeaderboard()
+    apiLeaderboard(scope)
       .then((data) => {
         if (!Array.isArray(data)) {
           throw new Error("Unexpected leaderboard response.");
@@ -43,7 +44,7 @@ export default function Leaderboard() {
     return () => {
       cancelled = true;
     };
-  }, [reload]);
+  }, [reload, scope]);
 
   const rankedRows = useMemo(() => {
     const sorted = [...rows].sort(
@@ -77,14 +78,30 @@ export default function Leaderboard() {
         title="The standings."
         description="Cumulative scores. Shared scores receive the same rank."
         actions={
-          <button
-            className="btn"
-            type="button"
-            disabled={loading}
-            onClick={() => setReload((value) => value + 1)}
-          >
-            {loading ? "Refreshing…" : "Refresh standings"}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              ["global", "Global"],
+              ["lobby", "My lobby"],
+            ].map(([value, label]) => (
+              <button
+                className={`btn ${scope === value ? "btn-primary" : ""}`}
+                type="button"
+                key={value}
+                aria-pressed={scope === value}
+                onClick={() => setScope(value)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              className="btn"
+              type="button"
+              disabled={loading}
+              onClick={() => setReload((value) => value + 1)}
+            >
+              {loading ? "Refreshing…" : "Refresh standings"}
+            </button>
+          </div>
         }
       />
 

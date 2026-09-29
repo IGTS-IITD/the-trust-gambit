@@ -19,6 +19,7 @@ def resolve_current_round(game):
     while True:
         round_obj = (
             Round.objects.filter(game=game, is_completed=False, starts_at__isnull=False)
+            .select_related("game", "domain")
             .order_by("-round_number")
             .first()
         )

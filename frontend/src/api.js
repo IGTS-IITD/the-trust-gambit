@@ -103,7 +103,8 @@ export const apiCurrentRound = () => request("/current-round/");
 export const apiSubmitAction = (payload) =>
   request("/submit-action/", { method: "POST", body: payload });
 
-export const apiLeaderboard = () => request("/leaderboard/");
+export const apiLeaderboard = (scope = "global") =>
+  request(`/leaderboard/?scope=${scope}`);
 export const apiRounds = () => request("/rounds/");
 export const apiRoundGraph = (roundId) =>
   request(`/rounds/${roundId}/delegation-graph/`);

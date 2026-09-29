@@ -2,6 +2,8 @@ from django.core import mail
 from django.test import TestCase
 from django.utils import timezone
 from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -92,6 +94,61 @@ class ScoringEngineTest(TestCase):
         self.assertEqual(score_a, -1)
         self.assertEqual(score_b, -1)
         self.assertEqual(score_c, -1)
+
+
+class LeaderboardTest(TestCase):
+    def test_leaderboard_returns_all_active_game_participants(self):
+        game = Game.objects.create(name="Global leaderboard")
+        other_game = Game.objects.create(name="Previous game", is_active=False)
+
+        users = [
+            User.objects.create_user(f"leaderboard_{index}")
+            for index in range(3)
+        ]
+        participants = [Participant.objects.create(user=user) for user in users]
+
+        GameScore.objects.create(game=game, participant=participants[0], score=4)
+        GameScore.objects.create(game=other_game, participant=participants[1], score=99)
+
+        token = Token.objects.create(user=users[0])
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get("/api/leaderboard/")
+
+        self.assertEqual(response.status_code, 200)
+        scores = {
+            row["participant"]["username"]: row["score"]
+            for row in response.json()
+        }
+        self.assertEqual(scores, {
+            "leaderboard_0": 4.0,
+            "leaderboard_1": 0.0,
+            "leaderboard_2": 0.0,
+        })
+
+    def test_lobby_scope_returns_only_current_lobby(self):
+        game = Game.objects.create(name="Lobby leaderboard")
+        lobby = Lobby.objects.create(name="Lobby 1", game=game)
+        users = [
+            User.objects.create_user(f"lobby_{index}")
+            for index in range(3)
+        ]
+        participants = [Participant.objects.create(user=user) for user in users]
+        participants[0].current_lobby = lobby
+        participants[0].save(update_fields=["current_lobby"])
+        participants[1].current_lobby = lobby
+        participants[1].save(update_fields=["current_lobby"])
+
+        token = Token.objects.create(user=users[0])
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get("/api/leaderboard/?scope=lobby")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [row["participant"]["username"] for row in response.json()],
+            ["lobby_0", "lobby_1"],
+        )
 
 
 class LobbyAdminTest(TestCase):
