@@ -17,6 +17,7 @@ from .round_flow import (
     pause_current_round,
     resume_current_round,
     set_current_round_remaining,
+    restart_game,
 )
 from .serializers import ActionSerializer
 
@@ -412,6 +413,23 @@ class AdminTimingTest(TestCase):
         self.round.refresh_from_db()
         self.assertFalse(self.round.is_paused)
 
+    def test_admin_can_restart_completed_game(self):
+        force_advance_current_round(self.game)
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.COMPLETED)
+
+        token = Token.objects.create(user=self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = self.client.post(
+            "/api/admin/restart-game/",
+            {"game_id": self.game.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.RUNNING)
+
 
 class RoundResultsTest(TestCase):
     def test_completed_round_results_include_personal_breakdown(self):
@@ -678,6 +696,42 @@ class RoundFlowTest(TestCase):
         updated = set_current_round_remaining(self.game, 15)
         self.assertEqual(updated.id, paused.id)
         self.assertEqual(updated.paused_remaining_seconds, 15)
+
+    def test_restart_completed_game_resets_scores_and_preserves_lobby(self):
+        GameMembership.objects.create(game=self.game, participant=self.p_a)
+        start_game(self.game)
+        lobby_id = GameMembership.objects.get(
+            game=self.game, participant=self.p_a
+        ).lobby_id
+        Action.objects.create(
+            round=self.round1,
+            participant=self.p_a,
+            action_type=Action.ActionType.SOLVE,
+            submitted_answer="42",
+        )
+        force_advance_current_round(self.game)
+        force_advance_current_round(self.game)
+
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.COMPLETED)
+        self.assertTrue(GameScore.objects.filter(game=self.game).exists())
+
+        restarted_round = restart_game(self.game)
+
+        self.assertEqual(restarted_round.id, self.round1.id)
+        self.game.refresh_from_db()
+        self.round1.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.RUNNING)
+        self.assertFalse(self.round1.is_completed)
+        self.assertIsNotNone(self.round1.starts_at)
+        self.assertFalse(Action.objects.filter(round__game=self.game).exists())
+        self.assertFalse(GameScore.objects.filter(game=self.game).exists())
+        self.assertEqual(
+            GameMembership.objects.get(
+                game=self.game, participant=self.p_a
+            ).lobby_id,
+            lobby_id,
+        )
 
 
 class AdminStartGameTest(TestCase):

@@ -24,6 +24,7 @@ from .round_flow import (
     pause_current_round,
     resume_current_round,
     set_current_round_remaining,
+    restart_game,
 )
 from .email_verification import send_verification_email, resolve_verification_token
 
@@ -411,6 +412,25 @@ class AdminStartGameView(APIView):
             )
 
         return Response({'status': f'Round {started_round.round_number} started.'})
+
+
+class AdminRestartGameView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        game_id = request.data.get('game_id')
+        game = get_object_or_404(Game, id=game_id)
+        restarted_round = restart_game(game)
+        if not restarted_round:
+            return Response(
+                {'error': 'Only a completed game can be restarted, and no other game may be running.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'RESTARTED',
+            'game_id': game.id,
+            'round': RoundSerializer(restarted_round).data,
+        })
 
 
 class AdminPauseGameView(APIView):

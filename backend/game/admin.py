@@ -6,7 +6,7 @@ from django.urls import path, reverse
 from django.utils.html import format_html
 from django.shortcuts import get_object_or_404
 
-from .round_flow import start_game, pause_current_round, resume_current_round
+from .round_flow import start_game, pause_current_round, resume_current_round, restart_game
 from .models import Hostel, Participant, Domain, SelfRating, Game, Lobby, Round, Action, GameMembership
 
 @admin.register(Participant)
@@ -33,7 +33,7 @@ def start_selected_games(modeladmin, request, queryset):
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):
-    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "start_button", "playback_button"]
+    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "start_button", "playback_button", "restart_button"]
     list_filter = ["state"]
     search_fields = ["name"]
     actions = [start_selected_games]
@@ -67,6 +67,16 @@ class GameAdmin(admin.ModelAdmin):
         )
     playback_button.short_description = "Play / Pause"
 
+    def restart_button(self, obj):
+        if obj.state != Game.State.COMPLETED:
+            return ""
+        url = reverse('admin:game_game_restart_game', args=[obj.pk])
+        return format_html(
+            '<a class="button" href="{}" style="padding: 4px 8px; background-color: #166b58; color: white; border-radius: 4px; text-decoration: none;">Restart game</a>',
+            url,
+        )
+    restart_button.short_description = "Restart"
+
     def get_urls(self):
         return [
             path(
@@ -83,6 +93,11 @@ class GameAdmin(admin.ModelAdmin):
                 "<int:game_id>/resume/",
                 self.admin_site.admin_view(self.resume_game_view),
                 name="game_game_resume_game",
+            ),
+            path(
+                "<int:game_id>/restart/",
+                self.admin_site.admin_view(self.restart_game_view),
+                name="game_game_restart_game",
             ),
         ] + super().get_urls()
 
@@ -118,6 +133,14 @@ class GameAdmin(admin.ModelAdmin):
             messages.success(request, f"Game '{game.name}' resumed.")
         else:
             messages.error(request, "There is no paused round to resume.")
+        return HttpResponseRedirect(reverse("admin:game_game_changelist"))
+
+    def restart_game_view(self, request, game_id):
+        game = get_object_or_404(Game, pk=game_id)
+        if restart_game(game):
+            messages.success(request, f"Game '{game.name}' restarted from round 1.")
+        else:
+            messages.error(request, "Only a completed game can be restarted, and no other game may be running.")
         return HttpResponseRedirect(reverse("admin:game_game_changelist"))
 
 

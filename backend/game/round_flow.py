@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Round, Game, Lobby
+from .models import Round, Game, Action, GameScore, Lobby
 from .scoring import calculate_scores_for_round
 from .lobby_utils import assign_pending_memberships
 
@@ -203,3 +203,30 @@ def start_game(game):
     locked_game.save(update_fields=['state'])
     
     return round_one
+
+
+@transaction.atomic
+def restart_game(game):
+    """Reset a completed game and immediately start it from round one."""
+    locked_game = Game.objects.select_for_update().get(pk=game.pk)
+    if locked_game.state != Game.State.COMPLETED:
+        return None
+    if Game.objects.filter(state=Game.State.RUNNING).exists():
+        return None
+
+    Action.objects.filter(round__game=locked_game).delete()
+    GameScore.objects.filter(game=locked_game).delete()
+    Round.objects.filter(game=locked_game).update(
+        is_completed=False,
+        starts_at=None,
+        is_paused=False,
+        paused_at=None,
+        paused_remaining_seconds=None,
+        resolved_answer=None,
+        consensus_vote_counts={},
+    )
+    locked_game.state = Game.State.REGISTRATION
+    locked_game.save(update_fields=['state'])
+    locked_game.memberships.update(eligible_from_round=1)
+
+    return start_game(locked_game)
