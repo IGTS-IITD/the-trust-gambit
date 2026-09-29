@@ -26,6 +26,9 @@ def resolve_current_round(game):
         if not round_obj:
             return None
 
+        if round_obj.is_paused:
+            return round_obj
+
         elapsed = (timezone.now() - round_obj.starts_at).total_seconds()
         if elapsed < round_obj.duration_seconds:
             return round_obj
@@ -67,6 +70,87 @@ def _advance_past(locked_round):
 
     next_round.starts_at = locked.starts_at + timezone.timedelta(seconds=locked.duration_seconds)
     next_round.save(update_fields=["starts_at"])
+
+
+@transaction.atomic
+def pause_current_round(game):
+    """Freeze the current round at its server-calculated remaining time."""
+    round_obj = (
+        Round.objects.select_for_update()
+        .filter(game=game, is_completed=False, starts_at__isnull=False)
+        .order_by('-round_number')
+        .first()
+    )
+    if not round_obj:
+        return None
+    if round_obj.is_paused:
+        return round_obj
+
+    remaining = max(
+        0,
+        round_obj.duration_seconds
+        - (timezone.now() - round_obj.starts_at).total_seconds(),
+    )
+    if remaining <= 0:
+        _advance_past(round_obj)
+        return None
+
+    round_obj.is_paused = True
+    round_obj.paused_at = timezone.now()
+    round_obj.paused_remaining_seconds = remaining
+    round_obj.save(update_fields=[
+        'is_paused', 'paused_at', 'paused_remaining_seconds',
+    ])
+    return round_obj
+
+
+@transaction.atomic
+def resume_current_round(game):
+    """Resume a paused round without consuming its frozen remaining time."""
+    round_obj = (
+        Round.objects.select_for_update()
+        .filter(game=game, is_completed=False, is_paused=True)
+        .order_by('-round_number')
+        .first()
+    )
+    if not round_obj:
+        return None
+
+    remaining = max(0, round_obj.paused_remaining_seconds or 0)
+    round_obj.starts_at = timezone.now() - timezone.timedelta(
+        seconds=round_obj.duration_seconds - remaining
+    )
+    round_obj.is_paused = False
+    round_obj.paused_at = None
+    round_obj.paused_remaining_seconds = None
+    round_obj.save(update_fields=[
+        'starts_at', 'is_paused', 'paused_at', 'paused_remaining_seconds',
+    ])
+    return round_obj
+
+
+@transaction.atomic
+def set_current_round_remaining(game, remaining_seconds):
+    """Set the current round's remaining time, preserving pause state."""
+    round_obj = (
+        Round.objects.select_for_update()
+        .filter(game=game, is_completed=False, starts_at__isnull=False)
+        .order_by('-round_number')
+        .first()
+    )
+    if not round_obj:
+        return None
+
+    remaining = float(remaining_seconds)
+    if round_obj.is_paused:
+        round_obj.paused_remaining_seconds = remaining
+        round_obj.save(update_fields=['paused_remaining_seconds'])
+    else:
+        round_obj.starts_at = timezone.now() - timezone.timedelta(
+            seconds=round_obj.duration_seconds - remaining
+        )
+        round_obj.save(update_fields=['starts_at'])
+    return round_obj
 
 
 def force_advance_current_round(game):

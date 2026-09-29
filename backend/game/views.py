@@ -1,3 +1,5 @@
+import math
+
 from django.shortcuts import get_object_or_404
 from django.db import models
 from django.db.models import Q, Sum, Value
@@ -15,7 +17,14 @@ from .serializers import GameScoreSerializer, UserSerializer, ParticipantProfile
 
 from .scoring import calculate_scores_for_round
 from .lobby_utils import register_participant
-from .round_flow import resolve_current_round, force_advance_current_round, start_game
+from .round_flow import (
+    resolve_current_round,
+    force_advance_current_round,
+    start_game,
+    pause_current_round,
+    resume_current_round,
+    set_current_round_remaining,
+)
 from .email_verification import send_verification_email, resolve_verification_token
 
 class RegisterUserView(generics.CreateAPIView):
@@ -232,12 +241,25 @@ class CurrentRoundView(APIView):
         active_game = (
             Game.objects.filter(state=Game.State.RUNNING).first()
             or Game.objects.filter(state=Game.State.REGISTRATION).first()
+            or Game.objects.filter(state=Game.State.COMPLETED).order_by('-id').first()
         )
         if not active_game:
             return Response({"detail": "No active game at the moment."}, status=404)
 
         current_round = resolve_current_round(active_game)
         if not current_round:
+            last_completed_round = Round.objects.filter(
+                game=active_game, is_completed=True
+            ).order_by('-round_number').first()
+            membership = GameMembership.objects.filter(
+                game=active_game, participant=request.user.participant
+            ).first()
+            if last_completed_round and membership and membership.lobby:
+                return Response({
+                    'current_round': None,
+                    'last_completed_round_id': last_completed_round.id,
+                    'delegation_targets': [],
+                })
             return Response({"detail": "No active round at the moment."}, status=status.HTTP_404_NOT_FOUND)
 
         membership = GameMembership.objects.filter(game=active_game, participant=request.user.participant).first()
@@ -276,6 +298,8 @@ class SubmitActionView(generics.CreateAPIView):
         current_round = resolve_current_round(active_game)
         if not current_round:
             raise serializers.ValidationError("No active round available to submit an action for.")
+        if current_round.is_paused:
+            raise serializers.ValidationError("The game is paused. Submissions are temporarily disabled.")
             
         membership = GameMembership.objects.filter(game=active_game, participant=self.request.user.participant).first()
         if not membership or not membership.lobby:
@@ -388,6 +412,52 @@ class AdminStartGameView(APIView):
 
         return Response({'status': f'Round {started_round.round_number} started.'})
 
+
+class AdminPauseGameView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        active_game = Game.objects.filter(state=Game.State.RUNNING).first()
+        if not active_game:
+            return Response({'error': 'No active running game to pause.'}, status=status.HTTP_404_NOT_FOUND)
+        round_obj = pause_current_round(active_game)
+        if not round_obj:
+            return Response({'error': 'No active round to pause.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'PAUSED', 'round': RoundSerializer(round_obj).data})
+
+
+class AdminResumeGameView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        active_game = Game.objects.filter(state=Game.State.RUNNING).first()
+        if not active_game:
+            return Response({'error': 'No active running game to resume.'}, status=status.HTTP_404_NOT_FOUND)
+        round_obj = resume_current_round(active_game)
+        if not round_obj:
+            return Response({'error': 'No paused round to resume.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'RUNNING', 'round': RoundSerializer(round_obj).data})
+
+
+class AdminSetRoundTimeView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        active_game = Game.objects.filter(state=Game.State.RUNNING).first()
+        if not active_game:
+            return Response({'error': 'No active running game.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            remaining_seconds = float(request.data.get('remaining_seconds'))
+        except (TypeError, ValueError):
+            return Response({'error': 'remaining_seconds must be a number.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not math.isfinite(remaining_seconds) or not 0 < remaining_seconds:
+            return Response({'error': 'remaining_seconds must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        round_obj = set_current_round_remaining(active_game, remaining_seconds)
+        if not round_obj:
+            return Response({'error': 'No active round to retime.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'UPDATED', 'round': RoundSerializer(round_obj).data})
+
 class RoundListView(generics.ListAPIView):
     queryset = Round.objects.all().order_by('-round_number')
     serializer_class = RoundSerializer
@@ -427,3 +497,61 @@ class DelegationGraphView(APIView):
                 })
         
         return Response({'nodes': nodes, 'edges': edges})
+
+
+class RoundResultsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, round_id, *args, **kwargs):
+        round_obj = get_object_or_404(Round.objects.select_related('game'), id=round_id)
+        membership = GameMembership.objects.filter(
+            game=round_obj.game, participant=request.user.participant
+        ).select_related('lobby').first()
+        if not membership or not membership.lobby:
+            return Response({'detail': 'You are not in a lobby for this game.'}, status=status.HTTP_403_FORBIDDEN)
+        if not round_obj.is_completed:
+            return Response({'detail': 'Results are available after the round ends.'}, status=status.HTTP_409_CONFLICT)
+
+        lobby_participants = list(
+            Participant.objects.filter(memberships__lobby=membership.lobby)
+            .select_related('user').distinct()
+        )
+        participant_ids = {participant.id for participant in lobby_participants}
+        actions = list(
+            Action.objects.filter(
+                round=round_obj, participant_id__in=participant_ids
+            ).select_related('participant', 'delegated_to')
+        )
+        action_by_participant = {action.participant_id: action for action in actions}
+        delegated_counts = {
+            participant_id: sum(
+                action.action_type == Action.ActionType.DELEGATE
+                and action.delegated_to_id == participant_id
+                for action in actions
+            )
+            for participant_id in participant_ids
+        }
+        participant_results = []
+        for participant in lobby_participants:
+            action = action_by_participant.get(participant.id)
+            points = action.points_awarded if action else 0
+            base_points = action.base_points_awarded if action else 0
+            participant_results.append({
+                'participant': SimpleParticipantSerializer(participant).data,
+                'action_type': action.action_type if action else None,
+                'is_solve_correct': action.is_solve_correct if action else None,
+                'points_awarded': points,
+                'base_points_awarded': base_points,
+                'reputation_bonus': points - base_points,
+                'delegated_to_me': delegated_counts[participant.id],
+            })
+
+        consensus_votes = round_obj.consensus_vote_counts
+
+        return Response({
+            'round': RoundSerializer(round_obj).data,
+            'correct_answer': round_obj.correct_answer if round_obj.question_type == Round.QuestionType.STANDARD else round_obj.resolved_answer,
+            'answer_explanation': round_obj.answer_explanation,
+            'consensus_votes': consensus_votes,
+            'participants': participant_results,
+        })

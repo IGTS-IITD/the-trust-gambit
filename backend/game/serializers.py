@@ -88,6 +88,7 @@ class PublicSelfRatingSerializer(serializers.ModelSerializer):
 class RoundSerializer(serializers.ModelSerializer):
     domain = serializers.StringRelatedField() # Show the domain name instead of its ID
     seconds_remaining = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
     game_name = serializers.CharField(source='game.name', read_only=True)
 
     class Meta:
@@ -96,14 +97,27 @@ class RoundSerializer(serializers.ModelSerializer):
             'id', 'round_number', 'domain', 'question_text',
             'duration_seconds', 'starts_at', 'seconds_remaining',
             'game_name', 'question_type', 'consensus_mode', 'resolved_answer',
+            'consensus_vote_counts', 'answer_explanation', 'is_completed',
+            'is_paused', 'status',
         ]
 
     def get_seconds_remaining(self, obj):
         if not obj.starts_at:
             return None
+        if obj.is_paused:
+            return max(0, int(obj.paused_remaining_seconds or 0))
         from django.utils import timezone
         elapsed = (timezone.now() - obj.starts_at).total_seconds()
         return max(0, int(obj.duration_seconds - elapsed))
+
+    def get_status(self, obj):
+        if obj.is_completed:
+            return 'COMPLETED'
+        if obj.is_paused:
+            return 'PAUSED'
+        if obj.starts_at:
+            return 'RUNNING'
+        return 'SCHEDULED'
 
 class ActionSerializer(serializers.ModelSerializer):
     participant = serializers.HiddenField(default=serializers.CurrentUserDefault())
@@ -159,3 +173,13 @@ class GameScoreSerializer(serializers.ModelSerializer):
     class Meta:
         model = GameScore
         fields = ['participant', 'score']
+
+
+class RoundResultParticipantSerializer(serializers.Serializer):
+    participant = SimpleParticipantSerializer()
+    action_type = serializers.CharField(allow_null=True)
+    is_solve_correct = serializers.BooleanField(allow_null=True)
+    points_awarded = serializers.FloatField()
+    base_points_awarded = serializers.FloatField()
+    reputation_bonus = serializers.FloatField()
+    delegated_to_me = serializers.IntegerField()

@@ -6,7 +6,7 @@ from django.urls import path, reverse
 from django.utils.html import format_html
 from django.shortcuts import get_object_or_404
 
-from .round_flow import start_game
+from .round_flow import start_game, pause_current_round, resume_current_round
 from .models import Hostel, Participant, Domain, SelfRating, Game, Lobby, Round, Action, GameMembership
 
 @admin.register(Participant)
@@ -33,7 +33,7 @@ def start_selected_games(modeladmin, request, queryset):
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):
-    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "start_button"]
+    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "start_button", "playback_button"]
     list_filter = ["state"]
     search_fields = ["name"]
     actions = [start_selected_games]
@@ -45,12 +45,44 @@ class GameAdmin(admin.ModelAdmin):
         return ""
     start_button.short_description = "Start Action"
 
+    def playback_button(self, obj):
+        if obj.state != Game.State.RUNNING:
+            return ""
+        current_round = obj.rounds.filter(
+            is_completed=False, starts_at__isnull=False
+        ).order_by('-round_number').first()
+        if not current_round:
+            return ""
+        if current_round.is_paused:
+            url = reverse('admin:game_game_resume_game', args=[obj.pk])
+            label = 'Resume game'
+            color = '#166b58'
+        else:
+            url = reverse('admin:game_game_pause_game', args=[obj.pk])
+            label = 'Pause game'
+            color = '#a33932'
+        return format_html(
+            '<a class="button" href="{}" style="padding: 4px 8px; background-color: {}; color: white; border-radius: 4px; text-decoration: none;">{}</a>',
+            url, color, label,
+        )
+    playback_button.short_description = "Play / Pause"
+
     def get_urls(self):
         return [
             path(
                 "<int:game_id>/start-game/",
                 self.admin_site.admin_view(self.start_game_view),
                 name="game_game_start_game",
+            ),
+            path(
+                "<int:game_id>/pause/",
+                self.admin_site.admin_view(self.pause_game_view),
+                name="game_game_pause_game",
+            ),
+            path(
+                "<int:game_id>/resume/",
+                self.admin_site.admin_view(self.resume_game_view),
+                name="game_game_resume_game",
             ),
         ] + super().get_urls()
 
@@ -68,6 +100,26 @@ class GameAdmin(admin.ModelAdmin):
             messages.warning(request, f"Game '{game.name}' is not in REGISTRATION state.")
         return HttpResponseRedirect(reverse("admin:game_game_changelist"))
 
+    def pause_game_view(self, request, game_id):
+        game = get_object_or_404(Game, pk=game_id)
+        if game.state != Game.State.RUNNING:
+            messages.warning(request, "Only a running game can be paused.")
+        elif pause_current_round(game):
+            messages.success(request, f"Game '{game.name}' paused.")
+        else:
+            messages.error(request, "There is no active round to pause.")
+        return HttpResponseRedirect(reverse("admin:game_game_changelist"))
+
+    def resume_game_view(self, request, game_id):
+        game = get_object_or_404(Game, pk=game_id)
+        if game.state != Game.State.RUNNING:
+            messages.warning(request, "Only a running game can be resumed.")
+        elif resume_current_round(game):
+            messages.success(request, f"Game '{game.name}' resumed.")
+        else:
+            messages.error(request, "There is no paused round to resume.")
+        return HttpResponseRedirect(reverse("admin:game_game_changelist"))
+
 
 @admin.register(Round)
 class RoundAdmin(admin.ModelAdmin):
@@ -75,7 +127,21 @@ class RoundAdmin(admin.ModelAdmin):
         "round_number", "game", "domain", "duration_seconds",
         "starts_at", "is_completed",
     ]
-    readonly_fields = ["starts_at", "is_completed"]
+    readonly_fields = [
+        "starts_at", "is_completed", "is_paused", "paused_at",
+        "paused_remaining_seconds",
+    ]
+    fieldsets = [
+        (None, {
+            "fields": [
+                "game", "round_number", "domain", "question_text",
+                "correct_answer", "answer_explanation", "question_type",
+                "consensus_mode", "duration_seconds", "starts_at",
+                "is_completed", "is_paused", "paused_at",
+                "paused_remaining_seconds",
+            ],
+        }),
+    ]
     list_filter = ["game", "is_completed", "domain"]
     ordering = ["game", "round_number"]
 

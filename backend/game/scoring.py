@@ -67,6 +67,7 @@ def calculate_scores_for_round(round_id):
         round_obj.resolved_answer = _select_consensus_answer(
             consensus_answers.values(), round_obj.consensus_mode
         )
+        round_obj.consensus_vote_counts = dict(Counter(consensus_answers.values()))
 
         # A delegation chain that reaches a cycle has no valid answer and is
         # penalized directly rather than inheriting the cycle's score.
@@ -127,6 +128,7 @@ def calculate_scores_for_round(round_id):
     # --- Finalize and Save Scores ---
     for p_id, points in final_round_points.items():
         action = action_map[p_id]
+        action.base_points_awarded = base_round_points[p_id]
         action.points_awarded = points
         action.save()
 
@@ -138,7 +140,9 @@ def calculate_scores_for_round(round_id):
         score_obj.save()
 
     round_obj.is_completed = True
-    round_obj.save(update_fields=['is_completed', 'resolved_answer'])
+    round_obj.save(update_fields=[
+        'is_completed', 'resolved_answer', 'consensus_vote_counts',
+    ])
     print(f"Scoring for Round {round_id} complete.")
 
 

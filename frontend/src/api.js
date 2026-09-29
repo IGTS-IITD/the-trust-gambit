@@ -108,6 +108,8 @@ export const apiLeaderboard = (scope = "global") =>
 export const apiRounds = () => request("/rounds/");
 export const apiRoundGraph = (roundId) =>
   request(`/rounds/${roundId}/delegation-graph/`);
+export const apiRoundResults = (roundId) =>
+  request(`/rounds/${roundId}/results/`);
 
 export const apiPostSelfRatings = (payload) =>
   request("/self-ratings/", { method: "POST", body: payload });

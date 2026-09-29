@@ -3,6 +3,8 @@ import {
   apiCurrentRound,
   apiSubmitAction,
   apiGetAllRatings,
+  apiRoundResults,
+  getParticipantId,
 } from "../api.js";
 import {
   EmptyState,
@@ -81,10 +83,12 @@ export default function Dashboard() {
   const [submittedRoundId, setSubmittedRoundId] = useState(null);
   const [submissionError, setSubmissionError] = useState("");
   const [submissionMessage, setSubmissionMessage] = useState("");
+  const [roundResult, setRoundResult] = useState(null);
 
   const currentRoundIdRef = useRef(null);
   const mountedRef = useRef(false);
   const submissionInFlightRef = useRef(false);
+  const resultTimeoutRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,6 +109,28 @@ export default function Dashboard() {
         const nextRound = response.current_round ?? null;
         const nextRoundId = nextRound?.id ?? null;
         const previousRoundId = currentRoundIdRef.current;
+
+        const completedRoundId = response.last_completed_round_id ?? (
+          previousRoundId !== null && nextRoundId !== previousRoundId
+            ? previousRoundId
+            : null
+        );
+        if (completedRoundId && completedRoundId !== nextRoundId) {
+          apiRoundResults(completedRoundId)
+            .then((result) => {
+              if (!cancelled) {
+                setRoundResult(result);
+                window.clearTimeout(resultTimeoutRef.current);
+                resultTimeoutRef.current = window.setTimeout(
+                  () => setRoundResult(null),
+                  12000
+                );
+              }
+            })
+            .catch(() => {
+              if (!cancelled) setRoundResult(null);
+            });
+        }
 
         if (nextRoundId !== previousRoundId) {
           currentRoundIdRef.current = nextRoundId;
@@ -159,6 +185,7 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      window.clearTimeout(resultTimeoutRef.current);
     };
   }, [reload]);
 
@@ -198,12 +225,16 @@ export default function Dashboard() {
   }, [round?.id]);
 
   const secondsRemaining =
-    deadline === null
-      ? null
-      : Math.max(0, Math.ceil((deadline - clock) / 1000));
+    round?.is_paused
+      ? Number(round.seconds_remaining)
+      : deadline === null
+        ? null
+        : Math.max(0, Math.ceil((deadline - clock) / 1000));
 
   const roundClosed =
-    Boolean(round?.is_completed) || secondsRemaining === 0;
+    Boolean(round?.is_completed) || round?.is_paused || secondsRemaining === 0;
+
+  const roundPaused = round?.is_paused === true;
 
   const alreadySubmitted =
     round != null && submittedRoundId === round.id;
@@ -233,6 +264,10 @@ export default function Dashboard() {
         String(rating.participant?.id ?? rating.participant) ===
         String(participantId)
     )?.rating;
+
+  const myResult = roundResult?.participants?.find(
+    (result) => result.participant?.id === getParticipantId()
+  );
 
   const onSubmitAction = async (event) => {
     event.preventDefault();
@@ -313,6 +348,72 @@ export default function Dashboard() {
         }
       />
 
+      {roundResult && (
+        <Panel
+          title={`Round ${roundResult.round.round_number} result`}
+          aside={<span className="pill pill-live">Results</span>}
+          className="result-panel"
+        >
+          <div className="panel-body">
+            <div className="metrics" style={{ marginBottom: 0 }}>
+              <div className="metric">
+                <div className="metric-label">
+                  {roundResult.round.question_type === "CONSENSUS"
+                    ? "Resolved answer"
+                    : "Correct answer"}
+                </div>
+                <div className="metric-value mono">
+                  {roundResult.correct_answer ?? "No valid answer"}
+                </div>
+              </div>
+              <div className="metric">
+                <div className="metric-label">Your points</div>
+                <div className="metric-value mono">
+                  {myResult?.points_awarded ?? 0}
+                </div>
+              </div>
+              <div className="metric">
+                <div className="metric-label">Your result</div>
+                <div className="metric-value">
+                  {myResult?.is_solve_correct === true
+                    ? "Correct"
+                    : myResult?.is_solve_correct === false
+                      ? "Incorrect"
+                      : myResult?.action_type === "DELEGATE"
+                        ? "Delegated"
+                        : "No action"}
+                </div>
+              </div>
+              <div className="metric">
+                <div className="metric-label">Delegated to you</div>
+                <div className="metric-value mono">
+                  {myResult?.delegated_to_me ?? 0}
+                </div>
+              </div>
+              <div className="metric">
+                <div className="metric-label">Trust bonus</div>
+                <div className="metric-value mono">
+                  {myResult?.reputation_bonus ?? 0}
+                </div>
+              </div>
+            </div>
+            {roundResult.answer_explanation && (
+              <p className="form-note">
+                {roundResult.answer_explanation}
+              </p>
+            )}
+            {roundResult.round.question_type === "CONSENSUS" &&
+              Object.keys(roundResult.consensus_votes ?? {}).length > 0 && (
+                <p className="form-note">
+                  Votes: {Object.entries(roundResult.consensus_votes)
+                    .map(([answer, count]) => `${answer}: ${count}`)
+                    .join(" · ")}
+                </p>
+              )}
+          </div>
+        </Panel>
+      )}
+
       {loading ? (
         <Loading label="Loading the current round" />
       ) : !round ? (
@@ -382,7 +483,7 @@ export default function Dashboard() {
               title="The question"
               aside={
                 <span className={`pill ${!roundClosed ? "pill-live" : ""}`}>
-                  {roundClosed ? "Round closing" : "In progress"}
+                  {roundPaused ? "Paused" : roundClosed ? "Round closing" : "In progress"}
                 </span>
               }
             >
@@ -521,6 +622,10 @@ export default function Dashboard() {
 
                   <Notice tone="error">{submissionError}</Notice>
                   <Notice tone="success">{submissionMessage}</Notice>
+
+                  {roundPaused && (
+                    <Notice>The game is paused. Your decision is not being accepted.</Notice>
+                  )}
 
                   <button
                     type="submit"

@@ -10,7 +10,14 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from .models import Game, Round, Participant, Action, GameScore, Domain, Lobby, GameMembership
 from .scoring import calculate_scores_for_round
-from .round_flow import resolve_current_round, start_game, force_advance_current_round
+from .round_flow import (
+    resolve_current_round,
+    start_game,
+    force_advance_current_round,
+    pause_current_round,
+    resume_current_round,
+    set_current_round_remaining,
+)
 from .serializers import ActionSerializer
 
 class ScoringEngineTest(TestCase):
@@ -114,6 +121,7 @@ class ScoringEngineTest(TestCase):
 
         round.refresh_from_db()
         self.assertEqual(round.resolved_answer, "1")
+        self.assertEqual(round.consensus_vote_counts, {"1": 2, "2": 1})
         self.assertEqual(GameScore.objects.get(participant=self.p_a).score, 1)
         self.assertEqual(GameScore.objects.get(participant=self.p_b).score, 1)
         self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
@@ -343,6 +351,145 @@ class SubmitActionTest(TestCase):
             ).exists()
         )
 
+    def test_submit_action_is_rejected_while_game_is_paused(self):
+        game = Game.objects.create(name="Paused game")
+        domain = Domain.objects.create(name="Paused submit")
+        round_obj = Round.objects.create(
+            game=game, domain=domain, round_number=1,
+            question_text="Q1", correct_answer="42",
+        )
+        user = User.objects.create_user("paused_submitter")
+        participant = Participant.objects.create(user=user)
+        GameMembership.objects.create(game=game, participant=participant)
+        start_game(game)
+        pause_current_round(game)
+
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.post(
+            "/api/submit-action/",
+            {"action_type": Action.ActionType.SOLVE, "submitted_answer": "42"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("paused", str(response.json()).lower())
+
+
+class AdminTimingTest(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            "timing_admin", "timing@example.com", "password"
+        )
+        self.game = Game.objects.create(name="Admin timing")
+        domain = Domain.objects.create(name="Admin timing domain")
+        self.round = Round.objects.create(
+            game=self.game, domain=domain, round_number=1,
+            question_text="Q1", correct_answer="42",
+        )
+        self.client = APIClient()
+        start_game(self.game)
+
+    def test_admin_can_pause_resume_and_retime_current_round(self):
+        token = Token.objects.create(user=self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        pause_response = self.client.post("/api/admin/pause-game/")
+        self.assertEqual(pause_response.status_code, 200)
+        self.round.refresh_from_db()
+        self.assertTrue(self.round.is_paused)
+
+        time_response = self.client.post(
+            "/api/admin/set-round-time/",
+            {"remaining_seconds": 15},
+        )
+        self.assertEqual(time_response.status_code, 200)
+        self.round.refresh_from_db()
+        self.assertEqual(self.round.paused_remaining_seconds, 15)
+
+        resume_response = self.client.post("/api/admin/resume-game/")
+        self.assertEqual(resume_response.status_code, 200)
+        self.round.refresh_from_db()
+        self.assertFalse(self.round.is_paused)
+
+
+class RoundResultsTest(TestCase):
+    def test_completed_round_results_include_personal_breakdown(self):
+        game = Game.objects.create(name="Results game", beta_param=0.2)
+        domain = Domain.objects.create(name="Results")
+        round_obj = Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Q1",
+            correct_answer="42",
+            answer_explanation="The answer follows from the stated constraint.",
+        )
+        user_a = User.objects.create_user("results_a")
+        user_b = User.objects.create_user("results_b")
+        participant_a = Participant.objects.create(user=user_a)
+        participant_b = Participant.objects.create(user=user_b)
+        lobby = Lobby.objects.create(name="Results lobby", game=game)
+        for participant in (participant_a, participant_b):
+            GameMembership.objects.create(game=game, participant=participant, lobby=lobby)
+
+        start_game(game)
+        Action.objects.create(
+            round=round_obj,
+            participant=participant_a,
+            action_type=Action.ActionType.SOLVE,
+            submitted_answer="42",
+        )
+        Action.objects.create(
+            round=round_obj,
+            participant=participant_b,
+            action_type=Action.ActionType.DELEGATE,
+            delegated_to=participant_a,
+        )
+        force_advance_current_round(game)
+
+        token = Token.objects.create(user=user_a)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get(f"/api/rounds/{round_obj.id}/results/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["correct_answer"], "42")
+        self.assertEqual(payload["answer_explanation"], round_obj.answer_explanation)
+        result_by_name = {
+            row["participant"]["username"]: row for row in payload["participants"]
+        }
+        self.assertEqual(result_by_name["results_a"]["points_awarded"], 1.2)
+        self.assertEqual(result_by_name["results_a"]["delegated_to_me"], 1)
+        self.assertAlmostEqual(result_by_name["results_a"]["reputation_bonus"], 0.2)
+        self.assertEqual(result_by_name["results_b"]["points_awarded"], 0.5)
+
+        current_response = client.get("/api/current-round/")
+        self.assertEqual(current_response.status_code, 200)
+        self.assertIsNone(current_response.json()["current_round"])
+        self.assertEqual(current_response.json()["last_completed_round_id"], round_obj.id)
+
+    def test_results_are_unavailable_before_round_completion(self):
+        game = Game.objects.create(name="Incomplete results")
+        domain = Domain.objects.create(name="Incomplete")
+        round_obj = Round.objects.create(
+            game=game, domain=domain, round_number=1, question_text="Q1",
+        )
+        user = User.objects.create_user("incomplete_results")
+        participant = Participant.objects.create(user=user)
+        lobby = Lobby.objects.create(name="Incomplete lobby", game=game)
+        GameMembership.objects.create(
+            game=game, participant=participant, lobby=lobby
+        )
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+        response = client.get(f"/api/rounds/{round_obj.id}/results/")
+
+        self.assertEqual(response.status_code, 409)
+
 
 class LobbyLifecycleTest(TestCase):
     def test_lobbies_are_created_only_when_game_starts(self):
@@ -498,6 +645,39 @@ class RoundFlowTest(TestCase):
         resolve_current_round(self.game)  # simulates a second concurrent poll
 
         self.assertEqual(GameScore.objects.get(participant=self.p_a).score, 1)
+
+    def test_pause_freezes_round_and_resume_preserves_remaining_time(self):
+        start_game(self.game)
+        self.round1.starts_at = timezone.now() - timezone.timedelta(seconds=20)
+        self.round1.save(update_fields=["starts_at"])
+
+        paused = pause_current_round(self.game)
+        self.assertTrue(paused.is_paused)
+        self.assertGreater(paused.paused_remaining_seconds, 39)
+        self.assertLess(paused.paused_remaining_seconds, 41)
+        self.assertEqual(resolve_current_round(self.game).id, self.round1.id)
+
+        resumed = resume_current_round(self.game)
+        self.assertFalse(resumed.is_paused)
+        remaining = resumed.duration_seconds - (
+            timezone.now() - resumed.starts_at
+        ).total_seconds()
+        self.assertGreater(remaining, 39)
+        self.assertLess(remaining, 41)
+
+    def test_set_current_round_remaining_works_while_running_or_paused(self):
+        start_game(self.game)
+        updated = set_current_round_remaining(self.game, 25)
+        self.assertAlmostEqual(
+            updated.duration_seconds - (timezone.now() - updated.starts_at).total_seconds(),
+            25,
+            delta=0.5,
+        )
+
+        paused = pause_current_round(self.game)
+        updated = set_current_round_remaining(self.game, 15)
+        self.assertEqual(updated.id, paused.id)
+        self.assertEqual(updated.paused_remaining_seconds, 15)
 
 
 class AdminStartGameTest(TestCase):

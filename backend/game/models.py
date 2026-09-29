@@ -92,6 +92,7 @@ class Round(models.Model):
     domain = models.ForeignKey(Domain, on_delete=models.CASCADE)
     question_text = models.TextField()
     correct_answer = models.CharField(max_length=255, default='correct answer here')
+    answer_explanation = models.TextField(blank=True, default='')
     question_type = models.CharField(
         max_length=20,
         choices=QuestionType.choices,
@@ -102,6 +103,7 @@ class Round(models.Model):
         choices=ConsensusMode.choices,
         default=ConsensusMode.MAJORITY,
     )
+    consensus_vote_counts = models.JSONField(default=dict, blank=True)
     resolved_answer = models.CharField(max_length=255, null=True, blank=True, editable=False)
     is_completed = models.BooleanField(default=False)
     round_number = models.PositiveIntegerField()
@@ -116,6 +118,9 @@ class Round(models.Model):
         editable=False,
         help_text="Set automatically when this round becomes current. Leave blank.",
     )
+    is_paused = models.BooleanField(default=False)
+    paused_at = models.DateTimeField(null=True, blank=True, editable=False)
+    paused_remaining_seconds = models.FloatField(null=True, blank=True, editable=False)
 
     class Meta:
         unique_together = ('game', 'round_number')
@@ -144,6 +149,7 @@ class Action(models.Model):
     )
     
     is_solve_correct = models.BooleanField(null=True, blank=True)
+    base_points_awarded = models.FloatField(default=0)
     points_awarded = models.FloatField(default=0)
 
     class Meta:

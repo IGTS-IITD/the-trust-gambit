@@ -6,7 +6,8 @@ from .views import (
     CurrentRoundView, SubmitActionView,
     LeaderboardView, AdminEndRoundView, AllRatingsListView,
     AdminAssignLobbyView, AdminStartGameView,
-    VerifyEmailView, ResendVerificationView,
+    AdminPauseGameView, AdminResumeGameView, AdminSetRoundTimeView,
+    RoundResultsView, VerifyEmailView, ResendVerificationView,
 )
 
 urlpatterns = [
@@ -30,5 +31,9 @@ urlpatterns = [
 
     path('admin/end-round/', AdminEndRoundView.as_view(), name='admin-end-round'),
     path('admin/start-game/', AdminStartGameView.as_view(), name='admin-start-game'),
+    path('admin/pause-game/', AdminPauseGameView.as_view(), name='admin-pause-game'),
+    path('admin/resume-game/', AdminResumeGameView.as_view(), name='admin-resume-game'),
+    path('admin/set-round-time/', AdminSetRoundTimeView.as_view(), name='admin-set-round-time'),
     path('admin/assign-lobby/', AdminAssignLobbyView.as_view(), name='admin-assign-lobby'),
+    path('rounds/<int:round_id>/results/', RoundResultsView.as_view(), name='round-results'),
 ]
