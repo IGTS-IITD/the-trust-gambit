@@ -54,10 +54,13 @@ override any setting locally (defaults work out of the box with SQLite).
 
 1. Log into `/admin/` (django-jazzmin themed).
 2. Create a **Domain** (e.g. "Science", "History").
-3. Create a **Game** — give it a name. Lobbies are auto-created based on the
-   number of registered participants and the `player_limit` setting.
-4. Create one **Round** per round of the competition — each needs a question,
-   correct answer, domain, and `duration_seconds`.
+3. Create a **Game** — give it a name and set the `player_limit`. Participants
+   are registered without a lobby; lobbies are created and balanced when the
+   game starts.
+4. Create one **Round** per round of the competition. A standard round needs a
+   question and correct answer. A consensus round needs a question containing
+   numeric options 1, 2, 3, and 4, plus its question type and majority/minority
+   mode. Every round also needs a domain and `duration_seconds`.
 5. Hit the green **"Start Game"** button on the Games list page.
 
 The round sequence then runs itself: each round automatically scores and
@@ -65,9 +68,9 @@ opens the next one when its timer runs out. There's also a manual "end round
 early" override at `POST /api/admin/end-round/`.
 
 > **Lobby automation:** Lobbies are named `GameName-Lobby-1`,
-> `GameName-Lobby-2`, etc. and sized according to the `LOBBY_PLAYER_LIMIT`
-> env var (default 10). Players are randomly balanced across lobbies at game
-> start. Mid-game registrants go to the lobby with the fewest members.
+> `GameName-Lobby-2`, etc. and use the game's `player_limit` (normally 10).
+> Players are balanced across lobbies at game start. No lobbies exist during
+> registration. Mid-game registrants go to the lobby with the fewest members.
 >
 > **Single-game enforcement:** Only one game can be in the `RUNNING` state
 > at a time. You can create new games while one is running (they stay in
@@ -126,7 +129,6 @@ Django API to a normal host instead:
      "Email verification" below). Without these, emails just print to the
      server log instead of sending, and nobody can complete registration.
    - `LOBBY_PLAYER_LIMIT` — max players per lobby (default `10`).
-   - `LOBBY_SAFETY_BUFFER` — extra lobby capacity buffer (default `20`).
 3. Build command: `pip install -r requirements.txt && python manage.py
    collectstatic --noinput`.
 4. Start command: `python manage.py migrate && (python manage.py
