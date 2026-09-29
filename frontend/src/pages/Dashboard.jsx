@@ -84,6 +84,7 @@ export default function Dashboard() {
   const [submissionError, setSubmissionError] = useState("");
   const [submissionMessage, setSubmissionMessage] = useState("");
   const [roundResult, setRoundResult] = useState(null);
+  const [roundResultError, setRoundResultError] = useState("");
 
   const currentRoundIdRef = useRef(null);
   const mountedRef = useRef(false);
@@ -127,6 +128,7 @@ export default function Dashboard() {
             .then((result) => {
               if (!cancelled) {
                 setRoundResult(result);
+                setRoundResultError("");
                 window.clearTimeout(resultTimeoutRef.current);
                 const displaySeconds = Math.max(
                   1,
@@ -142,6 +144,9 @@ export default function Dashboard() {
               if (!cancelled) {
                 lastResultRoundIdRef.current = null;
                 setRoundResult(null);
+                setRoundResultError(
+                  "The round ended, but its results could not be loaded yet."
+                );
               }
             });
         }
@@ -249,6 +254,17 @@ export default function Dashboard() {
     Boolean(round?.is_completed) || round?.is_paused || secondsRemaining === 0;
 
   const roundPaused = round?.is_paused === true;
+
+  useEffect(() => {
+    if (deadline === null || roundPaused) return;
+
+    const delay = Math.max(0, deadline - Date.now()) + 50;
+    const timer = window.setTimeout(() => {
+      setReload((value) => value + 1);
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [deadline, roundPaused]);
 
   useEffect(() => {
     if (secondsRemaining !== 0 || roundPaused) {
@@ -389,6 +405,11 @@ export default function Dashboard() {
                 {roundResult.answer_explanation && (
                   <p className="form-note">{roundResult.answer_explanation}</p>
                 )}
+                {!roundResult.answer_explanation && (
+                  <p className="form-note">
+                    No explanation was provided for this round.
+                  </p>
+                )}
                 {roundResult.round.question_type === "CONSENSUS" &&
                   Object.keys(roundResult.consensus_votes ?? {}).length > 0 && (
                     <p className="form-note">
@@ -437,6 +458,7 @@ export default function Dashboard() {
           </div>
         </Panel>
       )}
+      {roundResultError && <Notice tone="error">{roundResultError}</Notice>}
 
       {loading ? (
         <Loading label="Loading the current round" />
