@@ -89,6 +89,8 @@ export default function Dashboard() {
   const mountedRef = useRef(false);
   const submissionInFlightRef = useRef(false);
   const resultTimeoutRef = useRef(null);
+  const lastResultRoundIdRef = useRef(null);
+  const expiryPollRequestedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -115,20 +117,32 @@ export default function Dashboard() {
             ? previousRoundId
             : null
         );
-        if (completedRoundId && completedRoundId !== nextRoundId) {
+        if (
+          completedRoundId &&
+          completedRoundId !== nextRoundId &&
+          lastResultRoundIdRef.current !== completedRoundId
+        ) {
+          lastResultRoundIdRef.current = completedRoundId;
           apiRoundResults(completedRoundId)
             .then((result) => {
               if (!cancelled) {
                 setRoundResult(result);
                 window.clearTimeout(resultTimeoutRef.current);
+                const displaySeconds = Math.max(
+                  1,
+                  Number(result.round?.result_display_seconds ?? 12)
+                );
                 resultTimeoutRef.current = window.setTimeout(
                   () => setRoundResult(null),
-                  12000
+                  displaySeconds * 1000
                 );
               }
             })
             .catch(() => {
-              if (!cancelled) setRoundResult(null);
+              if (!cancelled) {
+                lastResultRoundIdRef.current = null;
+                setRoundResult(null);
+              }
             });
         }
 
@@ -235,6 +249,17 @@ export default function Dashboard() {
     Boolean(round?.is_completed) || round?.is_paused || secondsRemaining === 0;
 
   const roundPaused = round?.is_paused === true;
+
+  useEffect(() => {
+    if (secondsRemaining !== 0 || roundPaused) {
+      expiryPollRequestedRef.current = false;
+      return;
+    }
+    if (expiryPollRequestedRef.current) return;
+
+    expiryPollRequestedRef.current = true;
+    setReload((value) => value + 1);
+  }, [secondsRemaining, roundPaused]);
 
   const alreadySubmitted =
     round != null && submittedRoundId === round.id;

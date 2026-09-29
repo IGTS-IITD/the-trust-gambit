@@ -248,10 +248,10 @@ class CurrentRoundView(APIView):
             return Response({"detail": "No active game at the moment."}, status=404)
 
         current_round = resolve_current_round(active_game)
+        last_completed_round = Round.objects.filter(
+            game=active_game, is_completed=True
+        ).order_by('-round_number').first()
         if not current_round:
-            last_completed_round = Round.objects.filter(
-                game=active_game, is_completed=True
-            ).order_by('-round_number').first()
             membership = GameMembership.objects.filter(
                 game=active_game, participant=request.user.participant
             ).first()
@@ -280,7 +280,10 @@ class CurrentRoundView(APIView):
 
         return Response({
             'current_round': round_serializer.data,
-            'delegation_targets': participants_serializer.data
+            'delegation_targets': participants_serializer.data,
+            'last_completed_round_id': (
+                last_completed_round.id if last_completed_round else None
+            ),
         })
 
 class SubmitActionView(generics.CreateAPIView):

@@ -24,6 +24,17 @@ def resolve_current_round(game):
             .first()
         )
         if not round_obj:
+            final_round = Round.objects.filter(
+                game=game, is_completed=True
+            ).order_by('-round_number').first()
+            if (
+                game.state == Game.State.RUNNING
+                and final_round
+                and final_round.results_until
+            ):
+                if timezone.now() >= final_round.results_until:
+                    game.state = Game.State.COMPLETED
+                    game.save(update_fields=['state'])
             return None
 
         if round_obj.is_paused:
@@ -63,9 +74,11 @@ def _advance_past(locked_round):
     ).first()
     
     if not next_round:
-        locked_game.state = Game.State.COMPLETED
-        locked_game.save(update_fields=['state'])
-        # (Lobbies persist permanently now)
+        locked.results_until = timezone.now() + timezone.timedelta(
+            seconds=locked_game.result_display_seconds
+        )
+        locked.save(update_fields=['results_until'])
+        # Keep the game running until the final result display window expires.
         return
 
     next_round.starts_at = locked.starts_at + timezone.timedelta(seconds=locked.duration_seconds)
@@ -212,6 +225,9 @@ def restart_game(game):
     rounds = Round.objects.filter(game=locked_game)
     if not rounds.exists() or rounds.filter(is_completed=False).exists():
         return None
+    final_round = rounds.order_by('-round_number').first()
+    if final_round.results_until and timezone.now() < final_round.results_until:
+        return None
     if Game.objects.filter(state=Game.State.RUNNING).exclude(pk=locked_game.pk).exists():
         return None
 
@@ -223,6 +239,7 @@ def restart_game(game):
         is_paused=False,
         paused_at=None,
         paused_remaining_seconds=None,
+        results_until=None,
         resolved_answer=None,
         consensus_vote_counts={},
     )

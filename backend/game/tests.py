@@ -415,6 +415,11 @@ class AdminTimingTest(TestCase):
 
     def test_admin_can_restart_completed_game(self):
         force_advance_current_round(self.game)
+        final_round = Round.objects.get(game=self.game, round_number=1)
+        final_round.results_until = timezone.now() - timezone.timedelta(seconds=1)
+        final_round.save(update_fields=['results_until'])
+        self.game.refresh_from_db()
+        resolve_current_round(self.game)
         self.game.refresh_from_db()
         self.assertEqual(self.game.state, Game.State.COMPLETED)
 
@@ -712,6 +717,11 @@ class RoundFlowTest(TestCase):
         force_advance_current_round(self.game)
         force_advance_current_round(self.game)
 
+        final_round = Round.objects.get(game=self.game, round_number=2)
+        final_round.results_until = timezone.now() - timezone.timedelta(seconds=1)
+        final_round.save(update_fields=['results_until'])
+        self.game.refresh_from_db()
+        resolve_current_round(self.game)
         self.game.refresh_from_db()
         self.assertEqual(self.game.state, Game.State.COMPLETED)
         self.assertTrue(GameScore.objects.filter(game=self.game).exists())
@@ -737,6 +747,9 @@ class RoundFlowTest(TestCase):
         start_game(self.game)
         force_advance_current_round(self.game)
         force_advance_current_round(self.game)
+        final_round = Round.objects.get(game=self.game, round_number=2)
+        final_round.results_until = timezone.now() - timezone.timedelta(seconds=1)
+        final_round.save(update_fields=['results_until'])
         self.game.state = Game.State.RUNNING
         self.game.save(update_fields=['state'])
 
@@ -745,6 +758,23 @@ class RoundFlowTest(TestCase):
         self.assertEqual(restarted_round.id, self.round1.id)
         self.game.refresh_from_db()
         self.assertEqual(self.game.state, Game.State.RUNNING)
+
+    def test_final_round_keeps_game_running_during_results_window(self):
+        start_game(self.game)
+        force_advance_current_round(self.game)
+        force_advance_current_round(self.game)
+
+        self.game.refresh_from_db()
+        final_round = Round.objects.get(game=self.game, round_number=2)
+        self.assertEqual(self.game.state, Game.State.RUNNING)
+        self.assertGreater(final_round.results_until, timezone.now())
+        self.assertIsNone(resolve_current_round(self.game))
+
+        final_round.results_until = timezone.now() - timezone.timedelta(seconds=1)
+        final_round.save(update_fields=['results_until'])
+        resolve_current_round(self.game)
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.COMPLETED)
 
 
 class AdminStartGameTest(TestCase):

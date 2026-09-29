@@ -20,6 +20,11 @@ class Game(models.Model):
     lambda_param = models.FloatField(default=0.5) 
     beta_param = models.FloatField(default=0.2)
     player_limit = models.PositiveIntegerField(default=settings.LOBBY_PLAYER_LIMIT)
+    result_display_seconds = models.PositiveIntegerField(
+        default=12,
+        validators=[MinValueValidator(1), MaxValueValidator(60)],
+        help_text="How long round results remain visible, in seconds.",
+    )
 
     def __str__(self):
         return self.name
@@ -121,6 +126,7 @@ class Round(models.Model):
     is_paused = models.BooleanField(default=False)
     paused_at = models.DateTimeField(null=True, blank=True, editable=False)
     paused_remaining_seconds = models.FloatField(null=True, blank=True, editable=False)
+    results_until = models.DateTimeField(null=True, blank=True, editable=False)
 
     class Meta:
         unique_together = ('game', 'round_number')

@@ -89,6 +89,9 @@ class RoundSerializer(serializers.ModelSerializer):
     domain = serializers.StringRelatedField() # Show the domain name instead of its ID
     seconds_remaining = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+    result_display_seconds = serializers.IntegerField(
+        source='game.result_display_seconds', read_only=True
+    )
     game_name = serializers.CharField(source='game.name', read_only=True)
 
     class Meta:
@@ -98,7 +101,7 @@ class RoundSerializer(serializers.ModelSerializer):
             'duration_seconds', 'starts_at', 'seconds_remaining',
             'game_name', 'question_type', 'consensus_mode', 'resolved_answer',
             'consensus_vote_counts', 'answer_explanation', 'is_completed',
-            'is_paused', 'status',
+            'is_paused', 'status', 'results_until', 'result_display_seconds',
         ]
 
     def get_seconds_remaining(self, obj):

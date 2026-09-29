@@ -5,6 +5,7 @@ from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 from django.utils.html import format_html
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from .round_flow import start_game, pause_current_round, resume_current_round, restart_game
 from .models import Hostel, Participant, Domain, SelfRating, Game, Lobby, Round, Action, GameMembership
@@ -33,7 +34,7 @@ def start_selected_games(modeladmin, request, queryset):
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):
-    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "start_button", "playback_button", "restart_button"]
+    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "result_display_seconds", "start_button", "playback_button", "restart_button"]
     list_filter = ["state"]
     search_fields = ["name"]
     actions = [start_selected_games]
@@ -68,7 +69,13 @@ class GameAdmin(admin.ModelAdmin):
     playback_button.short_description = "Play / Pause"
 
     def restart_button(self, obj):
-        if not obj.rounds.exists() or obj.rounds.filter(is_completed=False).exists():
+        final_round = obj.rounds.order_by('-round_number').first()
+        if (
+            not final_round
+            or not final_round.is_completed
+            or obj.rounds.filter(is_completed=False).exists()
+            or (final_round.results_until and final_round.results_until > timezone.now())
+        ):
             return ""
         url = reverse('admin:game_game_restart_game', args=[obj.pk])
         return format_html(
