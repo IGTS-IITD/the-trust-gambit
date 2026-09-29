@@ -398,7 +398,9 @@ class ProfileScoreTest(TestCase):
         old_game = Game.objects.create(
             name="Old game", state=Game.State.COMPLETED
         )
-        active_game = Game.objects.create(name="Active game")
+        active_game = Game.objects.create(
+            name="Active game", state=Game.State.RUNNING
+        )
         user = User.objects.create_user("profile_score")
         participant = Participant.objects.create(user=user)
         GameMembership.objects.create(game=active_game, participant=participant)
@@ -553,6 +555,10 @@ class RoundResultsTest(TestCase):
         self.assertEqual(current_response.status_code, 200)
         self.assertIsNone(current_response.json()["current_round"])
         self.assertEqual(current_response.json()["last_completed_round_id"], round_obj.id)
+        self.assertEqual(
+            current_response.json()["last_completed_round_results"]["correct_answer"],
+            "42",
+        )
 
     def test_results_are_unavailable_before_round_completion(self):
         game = Game.objects.create(name="Incomplete results")

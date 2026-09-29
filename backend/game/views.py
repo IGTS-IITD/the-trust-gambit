@@ -259,6 +259,9 @@ class CurrentRoundView(APIView):
                 return Response({
                     'current_round': None,
                     'last_completed_round_id': last_completed_round.id,
+                    'last_completed_round_results': RoundResultsView.build_payload(
+                        last_completed_round, membership
+                    ),
                     'delegation_targets': [],
                 })
             return Response({"detail": "No active round at the moment."}, status=status.HTTP_404_NOT_FOUND)
@@ -283,6 +286,10 @@ class CurrentRoundView(APIView):
             'delegation_targets': participants_serializer.data,
             'last_completed_round_id': (
                 last_completed_round.id if last_completed_round else None
+            ),
+            'last_completed_round_results': (
+                RoundResultsView.build_payload(last_completed_round, membership)
+                if last_completed_round and membership.lobby else None
             ),
         })
 
@@ -542,16 +549,8 @@ class DelegationGraphView(APIView):
 class RoundResultsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, round_id, *args, **kwargs):
-        round_obj = get_object_or_404(Round.objects.select_related('game'), id=round_id)
-        membership = GameMembership.objects.filter(
-            game=round_obj.game, participant=request.user.participant
-        ).select_related('lobby').first()
-        if not membership or not membership.lobby:
-            return Response({'detail': 'You are not in a lobby for this game.'}, status=status.HTTP_403_FORBIDDEN)
-        if not round_obj.is_completed:
-            return Response({'detail': 'Results are available after the round ends.'}, status=status.HTTP_409_CONFLICT)
-
+    @staticmethod
+    def build_payload(round_obj, membership):
         lobby_participants = list(
             Participant.objects.filter(memberships__lobby=membership.lobby)
             .select_related('user').distinct()
@@ -586,12 +585,25 @@ class RoundResultsView(APIView):
                 'delegated_to_me': delegated_counts[participant.id],
             })
 
-        consensus_votes = round_obj.consensus_vote_counts
-
-        return Response({
+        return {
             'round': RoundSerializer(round_obj).data,
-            'correct_answer': round_obj.correct_answer if round_obj.question_type == Round.QuestionType.STANDARD else round_obj.resolved_answer,
+            'correct_answer': (
+                round_obj.correct_answer
+                if round_obj.question_type == Round.QuestionType.STANDARD
+                else round_obj.resolved_answer
+            ),
             'answer_explanation': round_obj.answer_explanation,
-            'consensus_votes': consensus_votes,
+            'consensus_votes': round_obj.consensus_vote_counts,
             'participants': participant_results,
-        })
+        }
+
+    def get(self, request, round_id, *args, **kwargs):
+        round_obj = get_object_or_404(Round.objects.select_related('game'), id=round_id)
+        membership = GameMembership.objects.filter(
+            game=round_obj.game, participant=request.user.participant
+        ).select_related('lobby').first()
+        if not membership or not membership.lobby:
+            return Response({'detail': 'You are not in a lobby for this game.'}, status=status.HTTP_403_FORBIDDEN)
+        if not round_obj.is_completed:
+            return Response({'detail': 'Results are available after the round ends.'}, status=status.HTTP_409_CONFLICT)
+        return Response(self.build_payload(round_obj, membership))

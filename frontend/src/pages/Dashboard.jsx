@@ -124,7 +124,10 @@ export default function Dashboard() {
           lastResultRoundIdRef.current !== completedRoundId
         ) {
           lastResultRoundIdRef.current = completedRoundId;
-          apiRoundResults(completedRoundId)
+          const resultRequest = response.last_completed_round_results
+            ? Promise.resolve(response.last_completed_round_results)
+            : apiRoundResults(completedRoundId);
+          resultRequest
             .then((result) => {
               if (!cancelled) {
                 setRoundResult(result);

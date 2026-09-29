@@ -48,6 +48,7 @@ class ParticipantProfileSerializer(serializers.ModelSerializer):
         from django.db.models import Sum
         active_game = (
             Game.objects.filter(state=Game.State.RUNNING).first()
+            or Game.objects.filter(state=Game.State.COMPLETED).order_by('-id').first()
             or Game.objects.filter(state=Game.State.REGISTRATION).first()
         )
         if not active_game:
