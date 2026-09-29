@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Round, Game, Action, GameScore, Lobby
+from .models import Round, Game, Action, GameScore, Lobby, GameMembership
 from .scoring import calculate_scores_for_round
 from .lobby_utils import assign_pending_memberships
 
@@ -27,14 +27,22 @@ def resolve_current_round(game):
             final_round = Round.objects.filter(
                 game=game, is_completed=True
             ).order_by('-round_number').first()
-            if (
-                game.state == Game.State.RUNNING
-                and final_round
-                and final_round.results_until
-            ):
-                if timezone.now() >= final_round.results_until:
-                    game.state = Game.State.COMPLETED
-                    game.save(update_fields=['state'])
+            if game.state == Game.State.RUNNING and final_round and final_round.results_until:
+                if timezone.now() < final_round.results_until:
+                    return None
+
+                next_round = Round.objects.filter(
+                    game=game, is_completed=False
+                ).order_by('round_number').first()
+                if next_round:
+                    final_round.results_until = None
+                    final_round.save(update_fields=['results_until'])
+                    next_round.starts_at = timezone.now()
+                    next_round.save(update_fields=['starts_at'])
+                    continue
+
+                game.state = Game.State.COMPLETED
+                game.save(update_fields=['state'])
             return None
 
         if round_obj.is_paused:
@@ -81,7 +89,11 @@ def _advance_past(locked_round):
         # Keep the game running until the final result display window expires.
         return
 
-    next_round.starts_at = locked.starts_at + timezone.timedelta(seconds=locked.duration_seconds)
+    locked.results_until = timezone.now() + timezone.timedelta(
+        seconds=locked_game.result_display_seconds
+    )
+    locked.save(update_fields=['results_until'])
+    next_round.starts_at = None
     next_round.save(update_fields=["starts_at"])
 
 
@@ -180,7 +192,9 @@ def force_advance_current_round(game):
     _advance_past(round_obj)
     
     return Round.objects.filter(
-        game=game, round_number=round_obj.round_number + 1
+        game=game,
+        round_number=round_obj.round_number + 1,
+        starts_at__isnull=False,
     ).first()
 
 
@@ -248,3 +262,31 @@ def restart_game(game):
     locked_game.memberships.update(eligible_from_round=1)
 
     return start_game(locked_game)
+
+
+@transaction.atomic
+def reset_game_to_registration(game):
+    """Stop a game and return it to a clean registration state."""
+    locked_game = Game.objects.select_for_update().get(pk=game.pk)
+    if locked_game.state != Game.State.RUNNING:
+        return None
+
+    Action.objects.filter(round__game=locked_game).delete()
+    GameScore.objects.filter(game=locked_game).delete()
+    GameMembership.objects.filter(game=locked_game).update(
+        lobby=None, eligible_from_round=1
+    )
+    Round.objects.filter(game=locked_game).update(
+        is_completed=False,
+        starts_at=None,
+        is_paused=False,
+        paused_at=None,
+        paused_remaining_seconds=None,
+        results_until=None,
+        resolved_answer=None,
+        consensus_vote_counts={},
+    )
+    Lobby.objects.filter(game=locked_game).delete()
+    locked_game.state = Game.State.REGISTRATION
+    locked_game.save(update_fields=['state'])
+    return locked_game

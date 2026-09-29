@@ -25,6 +25,7 @@ from .round_flow import (
     resume_current_round,
     set_current_round_remaining,
     restart_game,
+    reset_game_to_registration,
 )
 from .email_verification import send_verification_email, resolve_verification_token
 
@@ -444,6 +445,21 @@ class AdminRestartGameView(APIView):
             'game_id': game.id,
             'round': RoundSerializer(restarted_round).data,
         })
+
+
+class AdminResetGameView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        game_id = request.data.get('game_id')
+        game = get_object_or_404(Game, id=game_id)
+        reset_game = reset_game_to_registration(game)
+        if not reset_game:
+            return Response(
+                {'error': 'Only a running game can be reset to registration.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'status': 'REGISTRATION', 'game_id': game.id})
 
 
 class AdminResetLeaderboardView(APIView):

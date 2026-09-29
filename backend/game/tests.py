@@ -18,6 +18,7 @@ from .round_flow import (
     resume_current_round,
     set_current_round_remaining,
     restart_game,
+    reset_game_to_registration,
 )
 from .serializers import ActionSerializer
 
@@ -498,6 +499,39 @@ class AdminTimingTest(TestCase):
         self.game.refresh_from_db()
         self.assertEqual(self.game.state, Game.State.RUNNING)
 
+    def test_admin_can_reset_running_game_to_registration(self):
+        user = User.objects.create_user("reset_player")
+        participant = Participant.objects.create(user=user)
+        membership = GameMembership.objects.create(
+            game=self.game, participant=participant
+        )
+        start_game(self.game)
+        Action.objects.create(
+            round=self.round,
+            participant=participant,
+            action_type=Action.ActionType.PASS,
+        )
+        GameScore.objects.create(game=self.game, participant=participant, score=5)
+
+        token = Token.objects.create(user=self.admin)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = self.client.post(
+            "/api/admin/reset-game/",
+            {"game_id": self.game.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.game.refresh_from_db()
+        self.round.refresh_from_db()
+        membership.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.REGISTRATION)
+        self.assertIsNone(self.round.starts_at)
+        self.assertFalse(Action.objects.filter(round=self.round).exists())
+        self.assertFalse(GameScore.objects.filter(game=self.game).exists())
+        self.assertIsNone(membership.lobby)
+        self.assertEqual(Lobby.objects.filter(game=self.game).count(), 0)
+
 
 class RoundResultsTest(TestCase):
     def test_completed_round_results_include_personal_breakdown(self):
@@ -669,6 +703,13 @@ class RoundFlowTest(TestCase):
             question_text="Q2", correct_answer="7", duration_seconds=60,
         )
 
+    def end_results_window(self, round_obj):
+        round_obj.refresh_from_db()
+        round_obj.results_until = timezone.now() - timezone.timedelta(seconds=1)
+        round_obj.save(update_fields=['results_until'])
+        self.game.refresh_from_db()
+        return resolve_current_round(self.game)
+
     def test_no_current_round_before_game_starts(self):
         self.assertIsNone(resolve_current_round(self.game))
 
@@ -699,6 +740,9 @@ class RoundFlowTest(TestCase):
 
         current = resolve_current_round(self.game)
 
+        self.assertIsNone(current)
+        current = self.end_results_window(self.round1)
+
         self.assertEqual(current.id, self.round2.id)
         self.assertTrue(Round.objects.get(pk=self.round1.pk).is_completed)
         self.assertEqual(GameScore.objects.get(participant=self.p_a).score, 1)
@@ -711,8 +755,14 @@ class RoundFlowTest(TestCase):
 
         current = resolve_current_round(self.game)
 
-        self.assertIsNone(current)  # game finished, no round 3
+        self.assertIsNone(current)  # results window for round 1
         self.assertTrue(Round.objects.get(pk=self.round1.pk).is_completed)
+
+        self.end_results_window(self.round1)
+        self.round2.starts_at = timezone.now() - timezone.timedelta(seconds=61)
+        self.round2.save(update_fields=['starts_at'])
+        self.assertIsNone(resolve_current_round(self.game))
+        self.end_results_window(self.round2)
         self.assertTrue(Round.objects.get(pk=self.round2.pk).is_completed)
 
     def test_force_advance_ends_round_early(self):
@@ -721,9 +771,12 @@ class RoundFlowTest(TestCase):
 
         next_round = force_advance_current_round(self.game)
 
-        self.assertEqual(next_round.id, self.round2.id)
+        self.assertIsNone(next_round)
         self.assertTrue(Round.objects.get(pk=self.round1.pk).is_completed)
         self.assertEqual(GameScore.objects.get(participant=self.p_a).score, 1)
+
+        next_round = self.end_results_window(self.round1)
+        self.assertEqual(next_round.id, self.round2.id)
 
     def test_double_resolve_does_not_double_score(self):
         start_game(self.game)
@@ -782,6 +835,7 @@ class RoundFlowTest(TestCase):
             submitted_answer="42",
         )
         force_advance_current_round(self.game)
+        self.end_results_window(self.round1)
         force_advance_current_round(self.game)
 
         final_round = Round.objects.get(game=self.game, round_number=2)
@@ -813,10 +867,9 @@ class RoundFlowTest(TestCase):
     def test_restart_uses_completed_rounds_even_if_game_state_is_still_running(self):
         start_game(self.game)
         force_advance_current_round(self.game)
+        self.end_results_window(self.round1)
         force_advance_current_round(self.game)
-        final_round = Round.objects.get(game=self.game, round_number=2)
-        final_round.results_until = timezone.now() - timezone.timedelta(seconds=1)
-        final_round.save(update_fields=['results_until'])
+        self.end_results_window(self.round2)
         self.game.state = Game.State.RUNNING
         self.game.save(update_fields=['state'])
 
@@ -829,6 +882,7 @@ class RoundFlowTest(TestCase):
     def test_final_round_keeps_game_running_during_results_window(self):
         start_game(self.game)
         force_advance_current_round(self.game)
+        self.end_results_window(self.round1)
         force_advance_current_round(self.game)
 
         self.game.refresh_from_db()

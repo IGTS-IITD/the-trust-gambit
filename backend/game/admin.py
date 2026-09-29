@@ -7,7 +7,10 @@ from django.utils.html import format_html
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from .round_flow import start_game, pause_current_round, resume_current_round, restart_game
+from .round_flow import (
+    start_game, pause_current_round, resume_current_round, restart_game,
+    reset_game_to_registration,
+)
 from .models import Hostel, Participant, Domain, SelfRating, Game, Lobby, Round, Action, GameMembership, GameScore
 
 @admin.register(Participant)
@@ -34,7 +37,7 @@ def start_selected_games(modeladmin, request, queryset):
 
 @admin.register(Game)
 class GameAdmin(admin.ModelAdmin):
-    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "result_display_seconds", "start_button", "playback_button", "restart_button", "reset_leaderboard_button"]
+    list_display = ["name", "state", "lambda_param", "beta_param", "player_limit", "result_display_seconds", "start_button", "playback_button", "restart_button", "reset_game_button", "reset_leaderboard_button"]
     list_filter = ["state"]
     search_fields = ["name"]
     actions = [start_selected_games]
@@ -84,6 +87,16 @@ class GameAdmin(admin.ModelAdmin):
         )
     restart_button.short_description = "Restart"
 
+    def reset_game_button(self, obj):
+        if obj.state != Game.State.RUNNING:
+            return ""
+        url = reverse('admin:game_game_reset_game', args=[obj.pk])
+        return format_html(
+            '<a class="button" href="{}" style="padding: 4px 8px; background-color: #a33932; color: white; border-radius: 4px; text-decoration: none;">Reset to registration</a>',
+            url,
+        )
+    reset_game_button.short_description = "Reset game"
+
     def reset_leaderboard_button(self, obj):
         if not GameScore.objects.filter(game=obj).exists():
             return ""
@@ -115,6 +128,11 @@ class GameAdmin(admin.ModelAdmin):
                 "<int:game_id>/restart/",
                 self.admin_site.admin_view(self.restart_game_view),
                 name="game_game_restart_game",
+            ),
+            path(
+                "<int:game_id>/reset-game/",
+                self.admin_site.admin_view(self.reset_game_view),
+                name="game_game_reset_game",
             ),
             path(
                 "<int:game_id>/reset-leaderboard/",
@@ -163,6 +181,14 @@ class GameAdmin(admin.ModelAdmin):
             messages.success(request, f"Game '{game.name}' restarted from round 1.")
         else:
             messages.error(request, "A game can be restarted only when all its rounds are complete and no other game is running.")
+        return HttpResponseRedirect(reverse("admin:game_game_changelist"))
+
+    def reset_game_view(self, request, game_id):
+        game = get_object_or_404(Game, pk=game_id)
+        if reset_game_to_registration(game):
+            messages.success(request, f"Game '{game.name}' reset to registration.")
+        else:
+            messages.error(request, "Only a running game can be reset to registration.")
         return HttpResponseRedirect(reverse("admin:game_game_changelist"))
 
     def reset_leaderboard_view(self, request, game_id):
