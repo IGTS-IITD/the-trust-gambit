@@ -130,13 +130,13 @@ class ActionSerializer(serializers.ModelSerializer):
         if action_type == Action.ActionType.SOLVE:
             if not submitted_answer:
                 raise serializers.ValidationError("A submitted_answer is required for the 'Solve' action.")
-                if (
-                    self.round.question_type == Round.QuestionType.CONSENSUS
-                    and submitted_answer.strip() not in {'1', '2', '3', '4'}
-                ):
-                    raise serializers.ValidationError(
-                        "Consensus answers must be one of 1, 2, 3, or 4."
-                    )
+            if (
+                self.round.question_type == Round.QuestionType.CONSENSUS
+                and (submitted_answer or '').strip() not in {'1', '2', '3', '4'}
+            ):
+                raise serializers.ValidationError(
+                    "Consensus answers must be one of 1, 2, 3, or 4."
+                )
             if delegated_to:
                 raise serializers.ValidationError("Cannot specify a delegation target when solving.")
         elif action_type == Action.ActionType.DELEGATE:

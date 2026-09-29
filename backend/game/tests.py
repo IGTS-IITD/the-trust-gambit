@@ -11,6 +11,7 @@ from django.utils.http import urlsafe_base64_encode
 from .models import Game, Round, Participant, Action, GameScore, Domain, Lobby, GameMembership
 from .scoring import calculate_scores_for_round
 from .round_flow import resolve_current_round, start_game, force_advance_current_round
+from .serializers import ActionSerializer
 
 class ScoringEngineTest(TestCase):
 
@@ -157,6 +158,22 @@ class ScoringEngineTest(TestCase):
         self.assertAlmostEqual(GameScore.objects.get(participant=self.p_a).score, 0.5)
         self.assertAlmostEqual(GameScore.objects.get(participant=self.p_b).score, 1.2)
         self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
+
+    def test_consensus_serializer_rejects_invalid_numeric_choice(self):
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Choose a number",
+            question_type=Round.QuestionType.CONSENSUS,
+        )
+        serializer = ActionSerializer(
+            data={"action_type": "SOLVE", "submitted_answer": "9"},
+            context={"request": type("Req", (), {"user": type("User", (), {"participant": self.p_a})()})(), "round": round},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("Consensus answers must be one of 1, 2, 3, or 4.", str(serializer.errors["non_field_errors"]))
 
     def test_consensus_cycle_and_inbound_delegation_are_minus_one(self):
         user_d = User.objects.create_user('user_d')
