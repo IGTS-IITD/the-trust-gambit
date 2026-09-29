@@ -297,6 +297,44 @@ a:focus-visible {
   align-items: start;
 }
 
+.result-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+.result-column {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  background: #fbfbf6;
+}
+
+.result-answer {
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.result-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.result-metrics .metric {
+  padding: 14px 16px;
+}
+
+.result-metrics .metric:nth-child(even) {
+  border-left: 1px solid var(--line);
+}
+
+.result-metrics .metric:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+
 .equal-layout {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -973,6 +1011,7 @@ textarea.input {
   }
 
   .split-layout,
+  .result-grid,
   .equal-layout,
   .auth-layout {
     grid-template-columns: 1fr;
@@ -1043,6 +1082,18 @@ textarea.input {
 
   .metric-value {
     font-size: 19px;
+  }
+
+  .result-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .result-metrics .metric:nth-child(even) {
+    border-left: 0;
+  }
+
+  .result-metrics .metric:nth-child(n + 2) {
+    border-top: 1px solid var(--line);
   }
 
   .metric-label {

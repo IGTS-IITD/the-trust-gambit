@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .email_verification import is_disposable_email
-from .models import GameScore, Participant, Domain, SelfRating, Hostel, Action, Round
+from .models import GameScore, Participant, Domain, SelfRating, Hostel, Action, Round, Game
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -46,8 +46,15 @@ class ParticipantProfileSerializer(serializers.ModelSerializer):
 
     def get_total_score(self, obj):
         from django.db.models import Sum
-        res = obj.game_scores.aggregate(Sum('score'))
-        return res['score__sum'] or 0
+        active_game = (
+            Game.objects.filter(state=Game.State.RUNNING).first()
+            or Game.objects.filter(state=Game.State.REGISTRATION).first()
+        )
+        if not active_game:
+            return 0
+        return obj.game_scores.filter(game=active_game).aggregate(
+            total=Sum('score')
+        )['total'] or 0
 
 class SelfRatingSerializer(serializers.ModelSerializer):
     participant = serializers.PrimaryKeyRelatedField(queryset=Participant.objects.all())

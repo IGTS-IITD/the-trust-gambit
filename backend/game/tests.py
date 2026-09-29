@@ -352,6 +352,27 @@ class SubmitActionTest(TestCase):
             ).exists()
         )
 
+
+class ProfileScoreTest(TestCase):
+    def test_profile_score_is_limited_to_current_game(self):
+        old_game = Game.objects.create(
+            name="Old game", state=Game.State.COMPLETED
+        )
+        active_game = Game.objects.create(name="Active game")
+        user = User.objects.create_user("profile_score")
+        participant = Participant.objects.create(user=user)
+        GameMembership.objects.create(game=active_game, participant=participant)
+        GameScore.objects.create(game=old_game, participant=participant, score=99)
+        GameScore.objects.create(game=active_game, participant=participant, score=4)
+
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get("/api/profile/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["total_score"], 4.0)
+
     def test_submit_action_is_rejected_while_game_is_paused(self):
         game = Game.objects.create(name="Paused game")
         domain = Domain.objects.create(name="Paused submit")

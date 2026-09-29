@@ -368,7 +368,7 @@ export default function Dashboard() {
         actions={
           <span className="pill">
             <span className="status-dot" aria-hidden="true" />
-            {syncError ? "Sync interrupted" : "Updates every 5s"}
+            {syncError ? "Sync interrupted" : "Live timer · results on finish"}
           </span>
         }
       />
@@ -380,61 +380,60 @@ export default function Dashboard() {
           className="result-panel"
         >
           <div className="panel-body">
-            <div className="metrics" style={{ marginBottom: 0 }}>
-              <div className="metric">
-                <div className="metric-label">
-                  {roundResult.round.question_type === "CONSENSUS"
-                    ? "Resolved answer"
-                    : "Correct answer"}
-                </div>
-                <div className="metric-value mono">
+            <div className="result-grid">
+              <section className="result-column">
+                <p className="eyebrow">Answer</p>
+                <div className="result-answer mono">
                   {roundResult.correct_answer ?? "No valid answer"}
                 </div>
-              </div>
-              <div className="metric">
-                <div className="metric-label">Your points</div>
-                <div className="metric-value mono">
-                  {myResult?.points_awarded ?? 0}
+                {roundResult.answer_explanation && (
+                  <p className="form-note">{roundResult.answer_explanation}</p>
+                )}
+                {roundResult.round.question_type === "CONSENSUS" &&
+                  Object.keys(roundResult.consensus_votes ?? {}).length > 0 && (
+                    <p className="form-note">
+                      Votes: {Object.entries(roundResult.consensus_votes)
+                        .map(([answer, count]) => `${answer}: ${count}`)
+                        .join(" · ")}
+                    </p>
+                  )}
+              </section>
+              <section className="result-column">
+                <p className="eyebrow">Your points breakdown</p>
+                <div className="result-metrics">
+                  <div className="metric">
+                    <div className="metric-label">Points</div>
+                    <div className="metric-value mono">
+                      {myResult?.points_awarded ?? 0}
+                    </div>
+                  </div>
+                  <div className="metric">
+                    <div className="metric-label">Result</div>
+                    <div className="metric-value">
+                      {myResult?.is_solve_correct === true
+                        ? "Correct"
+                        : myResult?.is_solve_correct === false
+                          ? "Incorrect"
+                          : myResult?.action_type === "DELEGATE"
+                            ? "Delegated"
+                            : "No action"}
+                    </div>
+                  </div>
+                  <div className="metric">
+                    <div className="metric-label">Delegated to you</div>
+                    <div className="metric-value mono">
+                      {myResult?.delegated_to_me ?? 0}
+                    </div>
+                  </div>
+                  <div className="metric">
+                    <div className="metric-label">Trust bonus</div>
+                    <div className="metric-value mono">
+                      {myResult?.reputation_bonus ?? 0}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="metric">
-                <div className="metric-label">Your result</div>
-                <div className="metric-value">
-                  {myResult?.is_solve_correct === true
-                    ? "Correct"
-                    : myResult?.is_solve_correct === false
-                      ? "Incorrect"
-                      : myResult?.action_type === "DELEGATE"
-                        ? "Delegated"
-                        : "No action"}
-                </div>
-              </div>
-              <div className="metric">
-                <div className="metric-label">Delegated to you</div>
-                <div className="metric-value mono">
-                  {myResult?.delegated_to_me ?? 0}
-                </div>
-              </div>
-              <div className="metric">
-                <div className="metric-label">Trust bonus</div>
-                <div className="metric-value mono">
-                  {myResult?.reputation_bonus ?? 0}
-                </div>
-              </div>
+              </section>
             </div>
-            {roundResult.answer_explanation && (
-              <p className="form-note">
-                {roundResult.answer_explanation}
-              </p>
-            )}
-            {roundResult.round.question_type === "CONSENSUS" &&
-              Object.keys(roundResult.consensus_votes ?? {}).length > 0 && (
-                <p className="form-note">
-                  Votes: {Object.entries(roundResult.consensus_votes)
-                    .map(([answer, count]) => `${answer}: ${count}`)
-                    .join(" · ")}
-                </p>
-              )}
           </div>
         </Panel>
       )}
