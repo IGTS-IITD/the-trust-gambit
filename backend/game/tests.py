@@ -256,6 +256,56 @@ class LeaderboardTest(TestCase):
             ["lobby_0", "lobby_1"],
         )
 
+    def test_leaderboard_shows_scores_after_final_round_completes(self):
+        game = Game.objects.create(name="Completed leaderboard")
+        domain = Domain.objects.create(name="Final round")
+        round_obj = Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Q1",
+            correct_answer="42",
+            duration_seconds=60,
+        )
+        users = [
+            User.objects.create_user(f"completed_{index}")
+            for index in range(2)
+        ]
+        participants = [Participant.objects.create(user=user) for user in users]
+        for participant in participants:
+            GameMembership.objects.create(game=game, participant=participant)
+
+        start_game(game)
+        Action.objects.create(
+            round=round_obj,
+            participant=participants[0],
+            action_type=Action.ActionType.SOLVE,
+            submitted_answer="42",
+        )
+        round_obj.starts_at = timezone.now() - timezone.timedelta(seconds=61)
+        round_obj.save(update_fields=["starts_at"])
+
+        token = Token.objects.create(user=users[0])
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+        global_response = client.get("/api/leaderboard/")
+        lobby_response = client.get("/api/leaderboard/?scope=lobby")
+
+        self.assertEqual(global_response.status_code, 200)
+        self.assertEqual(lobby_response.status_code, 200)
+        self.assertEqual(
+            {
+                row["participant"]["username"]: row["score"]
+                for row in global_response.json()
+            },
+            {"completed_0": 1.0, "completed_1": 0.0},
+        )
+        self.assertEqual(
+            [row["participant"]["username"] for row in lobby_response.json()],
+            ["completed_0", "completed_1"],
+        )
+
 
 class LobbyLifecycleTest(TestCase):
     def test_lobbies_are_created_only_when_game_starts(self):

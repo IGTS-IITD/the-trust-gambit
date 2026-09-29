@@ -306,6 +306,13 @@ class LeaderboardView(APIView):
             Game.objects.filter(state=Game.State.RUNNING).first()
             or Game.objects.filter(state=Game.State.REGISTRATION).first()
         )
+        if active_game and active_game.state == Game.State.RUNNING:
+            resolve_current_round(active_game)
+            active_game.refresh_from_db()
+        if not active_game:
+            active_game = Game.objects.filter(
+                state=Game.State.COMPLETED
+            ).order_by('-id').first()
         if not active_game:
             return Response([], status=status.HTTP_200_OK)
 
