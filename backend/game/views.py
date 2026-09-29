@@ -423,7 +423,7 @@ class AdminRestartGameView(APIView):
         restarted_round = restart_game(game)
         if not restarted_round:
             return Response(
-                {'error': 'Only a completed game can be restarted, and no other game may be running.'},
+                {'error': 'A game can be restarted only when all its rounds are complete and no other game is running.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({

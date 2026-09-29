@@ -207,11 +207,12 @@ def start_game(game):
 
 @transaction.atomic
 def restart_game(game):
-    """Reset a completed game and immediately start it from round one."""
+    """Reset a game whose rounds are all complete and start round one."""
     locked_game = Game.objects.select_for_update().get(pk=game.pk)
-    if locked_game.state != Game.State.COMPLETED:
+    rounds = Round.objects.filter(game=locked_game)
+    if not rounds.exists() or rounds.filter(is_completed=False).exists():
         return None
-    if Game.objects.filter(state=Game.State.RUNNING).exists():
+    if Game.objects.filter(state=Game.State.RUNNING).exclude(pk=locked_game.pk).exists():
         return None
 
     Action.objects.filter(round__game=locked_game).delete()

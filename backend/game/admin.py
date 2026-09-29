@@ -68,7 +68,7 @@ class GameAdmin(admin.ModelAdmin):
     playback_button.short_description = "Play / Pause"
 
     def restart_button(self, obj):
-        if obj.state != Game.State.COMPLETED:
+        if not obj.rounds.exists() or obj.rounds.filter(is_completed=False).exists():
             return ""
         url = reverse('admin:game_game_restart_game', args=[obj.pk])
         return format_html(
@@ -140,7 +140,7 @@ class GameAdmin(admin.ModelAdmin):
         if restart_game(game):
             messages.success(request, f"Game '{game.name}' restarted from round 1.")
         else:
-            messages.error(request, "Only a completed game can be restarted, and no other game may be running.")
+            messages.error(request, "A game can be restarted only when all its rounds are complete and no other game is running.")
         return HttpResponseRedirect(reverse("admin:game_game_changelist"))
 
 

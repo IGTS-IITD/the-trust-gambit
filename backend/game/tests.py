@@ -733,6 +733,19 @@ class RoundFlowTest(TestCase):
             lobby_id,
         )
 
+    def test_restart_uses_completed_rounds_even_if_game_state_is_still_running(self):
+        start_game(self.game)
+        force_advance_current_round(self.game)
+        force_advance_current_round(self.game)
+        self.game.state = Game.State.RUNNING
+        self.game.save(update_fields=['state'])
+
+        restarted_round = restart_game(self.game)
+
+        self.assertEqual(restarted_round.id, self.round1.id)
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.state, Game.State.RUNNING)
+
 
 class AdminStartGameTest(TestCase):
     def test_admin_can_start_round_one(self):
