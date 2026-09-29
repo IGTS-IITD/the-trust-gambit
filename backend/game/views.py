@@ -266,7 +266,10 @@ class SubmitActionView(generics.CreateAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        active_game = Game.objects.exclude(state=Game.State.COMPLETED).first()
+        active_game = (
+            Game.objects.filter(state=Game.State.RUNNING).first()
+            or Game.objects.filter(state=Game.State.REGISTRATION).first()
+        )
         if not active_game:
             raise serializers.ValidationError("No active game to submit an action for.")
 

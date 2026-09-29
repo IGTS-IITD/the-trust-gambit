@@ -307,6 +307,43 @@ class LeaderboardTest(TestCase):
         )
 
 
+class SubmitActionTest(TestCase):
+    def test_submit_action_uses_running_game_over_older_registration_game(self):
+        Game.objects.create(name="Older registration game")
+        game = Game.objects.create(name="Running game")
+        domain = Domain.objects.create(name="Submit action")
+        round_obj = Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Q1",
+            correct_answer="42",
+        )
+        user = User.objects.create_user("submitter")
+        participant = Participant.objects.create(user=user)
+        GameMembership.objects.create(game=game, participant=participant)
+        start_game(game)
+
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+        response = client.post(
+            "/api/submit-action/",
+            {"action_type": Action.ActionType.SOLVE, "submitted_answer": "42"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            Action.objects.filter(
+                round=round_obj,
+                participant=participant,
+                submitted_answer="42",
+            ).exists()
+        )
+
+
 class LobbyLifecycleTest(TestCase):
     def test_lobbies_are_created_only_when_game_starts(self):
         game = Game.objects.create(name="Deferred lobbies", player_limit=2)
