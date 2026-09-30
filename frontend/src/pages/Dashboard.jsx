@@ -93,6 +93,20 @@ export default function Dashboard() {
   const lastResultRoundIdRef = useRef(null);
   const expiryPollRequestedRef = useRef(false);
 
+  const showRoundResult = (result) => {
+    setRoundResult(result);
+    setRoundResultError("");
+    window.clearTimeout(resultTimeoutRef.current);
+    const displaySeconds = Math.max(
+      1,
+      Number(result.round?.result_display_seconds ?? 12)
+    );
+    resultTimeoutRef.current = window.setTimeout(
+      () => setRoundResult(null),
+      displaySeconds * 1000
+    );
+  };
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -124,34 +138,23 @@ export default function Dashboard() {
           lastResultRoundIdRef.current !== completedRoundId
         ) {
           lastResultRoundIdRef.current = completedRoundId;
-          const resultRequest = response.last_completed_round_results
-            ? Promise.resolve(response.last_completed_round_results)
-            : apiRoundResults(completedRoundId);
-          resultRequest
-            .then((result) => {
-              if (!cancelled) {
-                setRoundResult(result);
-                setRoundResultError("");
-                window.clearTimeout(resultTimeoutRef.current);
-                const displaySeconds = Math.max(
-                  1,
-                  Number(result.round?.result_display_seconds ?? 12)
-                );
-                resultTimeoutRef.current = window.setTimeout(
-                  () => setRoundResult(null),
-                  displaySeconds * 1000
-                );
-              }
-            })
-            .catch(() => {
-              if (!cancelled) {
-                lastResultRoundIdRef.current = null;
-                setRoundResult(null);
-                setRoundResultError(
-                  "The round ended, but its results could not be loaded yet."
-                );
-              }
-            });
+          if (response.last_completed_round_results) {
+            showRoundResult(response.last_completed_round_results);
+          } else {
+            apiRoundResults(completedRoundId)
+              .then((result) => {
+                if (!cancelled) showRoundResult(result);
+              })
+              .catch(() => {
+                if (!cancelled) {
+                  lastResultRoundIdRef.current = null;
+                  setRoundResult(null);
+                  setRoundResultError(
+                    "The round ended, but its results could not be loaded yet."
+                  );
+                }
+              });
+          }
         }
 
         if (nextRoundId !== previousRoundId) {
