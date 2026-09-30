@@ -83,6 +83,34 @@ class ScoringEngineTest(TestCase):
         score_a = GameScore.objects.get(participant=self.p_a).score
         self.assertEqual(score_a, -2)
 
+    def test_unsuccessful_delegation_rounds_repeating_score_to_two_decimals(self):
+        self.game.lambda_param = 0.7
+        self.game.save(update_fields=['lambda_param'])
+        round = Round.objects.create(
+            game=self.game,
+            domain=self.domain,
+            round_number=1,
+            question_text="Q1",
+            correct_answer="ok",
+        )
+        Action.objects.create(
+            round=round,
+            participant=self.p_a,
+            action_type='DELEGATE',
+            delegated_to=self.p_b,
+        )
+        Action.objects.create(
+            round=round,
+            participant=self.p_b,
+            action_type='SOLVE',
+            submitted_answer="wrong",
+        )
+
+        calculate_scores_for_round(round.id)
+
+        self.assertEqual(GameScore.objects.get(participant=self.p_a).score, -1.43)
+        self.assertEqual(Action.objects.get(round=round, participant=self.p_a).points_awarded, -1.43)
+
     def test_reputation_bonus(self):
         round = Round.objects.create(game=self.game, domain=self.domain, round_number=1, question_text="Q1", correct_answer="win")
         Action.objects.create(round=round, participant=self.p_b, action_type='DELEGATE', delegated_to=self.p_a)

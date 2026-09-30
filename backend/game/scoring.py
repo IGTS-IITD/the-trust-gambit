@@ -3,6 +3,8 @@ from collections import Counter
 
 from .models import Round, Action, GameScore
 
+SCORE_DECIMAL_PLACES = 2
+
 def calculate_scores_for_round(round_id):
     """
     Main function to orchestrate the scoring process for a completed round.
@@ -128,15 +130,19 @@ def calculate_scores_for_round(round_id):
     # --- Finalize and Save Scores ---
     for p_id, points in final_round_points.items():
         action = action_map[p_id]
-        action.base_points_awarded = base_round_points[p_id]
-        action.points_awarded = points
+        rounded_base_points = round(
+            base_round_points[p_id], SCORE_DECIMAL_PLACES
+        )
+        rounded_points = round(points, SCORE_DECIMAL_PLACES)
+        action.base_points_awarded = rounded_base_points
+        action.points_awarded = rounded_points
         action.save()
 
         score_obj, created = GameScore.objects.get_or_create(
             game=game,
             participant=action.participant
         )
-        score_obj.score += points
+        score_obj.score += rounded_points
         score_obj.save()
 
     round_obj.is_completed = True
