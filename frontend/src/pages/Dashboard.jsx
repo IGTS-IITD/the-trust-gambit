@@ -466,23 +466,25 @@ export default function Dashboard() {
       {loading ? (
         <Loading label="Loading the current round" />
       ) : !round ? (
-        <Panel>
-          <EmptyState
-            title={syncError ? "Game status unavailable" : "Waiting for play"}
-            description={
-              syncError ||
-              "There is no active round available to you yet. This page checks automatically."
-            }
-          >
-            <button
-              className="btn"
-              type="button"
-              onClick={() => setReload((value) => value + 1)}
+        roundResult ? null : (
+          <Panel>
+            <EmptyState
+              title={syncError ? "Game status unavailable" : "Waiting for play"}
+              description={
+                syncError ||
+                "There is no active round available to you yet. This page checks automatically."
+              }
             >
-              Check again
-            </button>
-          </EmptyState>
-        </Panel>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setReload((value) => value + 1)}
+              >
+                Check again
+              </button>
+            </EmptyState>
+          </Panel>
+        )
       ) : (
         <div className="stack">
           {syncError && (

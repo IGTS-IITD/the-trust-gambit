@@ -534,6 +534,53 @@ class AdminTimingTest(TestCase):
 
 
 class RoundResultsTest(TestCase):
+    def test_current_round_returns_results_during_between_round_gap(self):
+        game = Game.objects.create(name="Gap results")
+        domain = Domain.objects.create(name="Gap")
+        round_one = Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=1,
+            question_text="Q1",
+            correct_answer="42",
+            answer_explanation="Because the constraint fixes the value.",
+        )
+        Round.objects.create(
+            game=game,
+            domain=domain,
+            round_number=2,
+            question_text="Q2",
+            correct_answer="7",
+        )
+        user = User.objects.create_user("gap_player")
+        participant = Participant.objects.create(user=user)
+        lobby = Lobby.objects.create(name="Gap lobby", game=game)
+        GameMembership.objects.create(
+            game=game, participant=participant, lobby=lobby
+        )
+
+        start_game(game)
+        Action.objects.create(
+            round=round_one,
+            participant=participant,
+            action_type=Action.ActionType.SOLVE,
+            submitted_answer="42",
+        )
+        force_advance_current_round(game)
+
+        token = Token.objects.create(user=user)
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+        response = client.get("/api/current-round/")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIsNone(payload["current_round"])
+        self.assertEqual(payload["last_completed_round_id"], round_one.id)
+        self.assertEqual(
+            payload["last_completed_round_results"]["correct_answer"], "42"
+        )
+
     def test_completed_round_results_include_personal_breakdown(self):
         game = Game.objects.create(name="Results game", beta_param=0.2)
         domain = Domain.objects.create(name="Results")
