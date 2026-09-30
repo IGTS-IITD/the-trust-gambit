@@ -172,10 +172,12 @@ class ScoringEngineTest(TestCase):
         calculate_scores_for_round(round.id)
 
         round.refresh_from_db()
-        self.assertEqual(round.resolved_answer, "2")
+        self.assertIn(round.resolved_answer, {"3", "4"})
+        self.assertEqual(round.consensus_vote_counts["3"], 0)
+        self.assertEqual(round.consensus_vote_counts["4"], 0)
         self.assertEqual(GameScore.objects.get(participant=self.p_a).score, -1)
         self.assertEqual(GameScore.objects.get(participant=self.p_b).score, -1)
-        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, 1)
+        self.assertEqual(GameScore.objects.get(participant=self.p_c).score, -1)
 
     def test_delegated_answer_counts_as_consensus_vote(self):
         round = Round.objects.create(

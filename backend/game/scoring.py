@@ -4,6 +4,7 @@ from collections import Counter
 from .models import Round, Action, GameScore
 
 SCORE_DECIMAL_PLACES = 2
+CONSENSUS_OPTIONS = ('1', '2', '3', '4')
 
 def calculate_scores_for_round(round_id):
     """
@@ -69,7 +70,10 @@ def calculate_scores_for_round(round_id):
         round_obj.resolved_answer = _select_consensus_answer(
             consensus_answers.values(), round_obj.consensus_mode
         )
-        round_obj.consensus_vote_counts = dict(Counter(consensus_answers.values()))
+        vote_counts = Counter(consensus_answers.values())
+        if round_obj.consensus_mode == Round.ConsensusMode.MINORITY:
+            vote_counts.update({option: 0 for option in CONSENSUS_OPTIONS})
+        round_obj.consensus_vote_counts = dict(vote_counts)
 
         # A delegation chain that reaches a cycle has no valid answer and is
         # penalized directly rather than inheriting the cycle's score.
@@ -252,6 +256,8 @@ def _reaches_cycle(participant_id, action_map, cycle_members):
 
 def _select_consensus_answer(answers, mode):
     counts = Counter(answers)
+    if mode == Round.ConsensusMode.MINORITY:
+        counts.update({option: 0 for option in CONSENSUS_OPTIONS})
     if not counts:
         return None
 
